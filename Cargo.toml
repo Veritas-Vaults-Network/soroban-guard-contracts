@@ -5,6 +5,7 @@ members = [
     "vulnerable/unchecked_math",
     "vulnerable/unprotected_admin",
     "vulnerable/unsafe_storage",
+    "vulnerable/key_collision",
     "secure/secure_vault",
     "secure/protected_admin",
     "registry",
