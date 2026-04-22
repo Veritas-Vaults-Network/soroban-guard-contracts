@@ -154,12 +154,50 @@ pub fn set_profile(env: Env, account: Address, display_name: String, kyc_level: 
 
 ---
 
+## 5. Self-Transfer Balance Inflation (`self_transfer`)
+
+**Contract:** `vulnerable/self_transfer` → `secure/secure_transfer`
+
+### What it is
+
+When `transfer(from, to, amount)` is called with `from == to`, both `get_balance` calls resolve to the same persistent storage slot. The function reads the balance once into two separate variables, subtracts from the first write, then overwrites that slot with the second write — inflating the account balance by `amount` instead of leaving it unchanged.
+
+### Vulnerable code
+
+```rust
+pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+    from.require_auth();
+    // ❌ No from != to check — self-transfer corrupts balance
+    let from_balance = get_balance(&env, &from);
+    let to_balance = get_balance(&env, &to); // same slot as from_balance when from == to
+    set_balance(&env, &from, from_balance.checked_sub(amount).unwrap());
+    set_balance(&env, &to, to_balance.checked_add(amount).unwrap()); // overwrites the subtraction
+}
+```
+
+### Secure fix
+
+```rust
+pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+    assert!(from != to, "self-transfer not allowed"); // ✅ Guard fires before any storage access
+    from.require_auth();
+    // ...
+}
+```
+
+### Impact
+
+- Balance inflation: a user can repeatedly self-transfer to inflate their balance without limit.
+- Severity: **Medium**
+
+---
+
 ## General Soroban Security Checklist
 
-| Check | Description |
-|---|---|
+| Check                               | Description                                                                                              |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `require_auth` on every mutating fn | Every function that reads or writes resources belonging to an address must call `address.require_auth()` |
-| Checked arithmetic | Use `checked_add`, `checked_sub`, `checked_mul` for all financial calculations |
-| Admin gate on privileged fns | `initialize`, `upgrade`, `set_admin`, `pause` must verify the caller is the stored admin |
-| Storage key ownership | Storage keys that include an `Address` must only be written after `address.require_auth()` |
-| No re-initialization | Guard `initialize` with a check that the contract hasn't already been set up |
+| Checked arithmetic                  | Use `checked_add`, `checked_sub`, `checked_mul` for all financial calculations                           |
+| Admin gate on privileged fns        | `initialize`, `upgrade`, `set_admin`, `pause` must verify the caller is the stored admin                 |
+| Storage key ownership               | Storage keys that include an `Address` must only be written after `address.require_auth()`               |
+| No re-initialization                | Guard `initialize` with a check that the contract hasn't already been set up                             |
