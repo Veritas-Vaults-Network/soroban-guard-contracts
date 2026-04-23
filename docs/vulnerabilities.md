@@ -192,6 +192,48 @@ pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
 
 ---
 
+## 6. Missing TTL Renewal (`missing_ttl`)
+
+**Contract:** `vulnerable/missing_ttl` → secure mirror in `vulnerable/missing_ttl/src/secure.rs`
+
+### What it is
+
+Soroban persistent storage entries are not permanent by default. Every entry has
+a ledger TTL, and once that window passes the entry expires unless the contract
+refreshes it with `env.storage().persistent().extend_ttl(...)`.
+
+### Vulnerable code
+
+```rust
+pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+    from.require_auth();
+    // ❌ No extend_ttl — active balances are never renewed
+    env.storage().persistent().set(&from_key, &new_from);
+    env.storage().persistent().set(&to_key, &new_to);
+}
+```
+
+### Secure fix
+
+```rust
+let balance: Option<i128> = env.storage().persistent().get(&key);
+if balance.is_some() {
+    env.storage().persistent().extend_ttl(&key, threshold, extend_to); // ✅ renew on read
+}
+
+env.storage().persistent().set(&key, &amount);
+env.storage().persistent().extend_ttl(&key, threshold, extend_to); // ✅ renew on write
+```
+
+### Impact
+
+- Liveness failure: after roughly the network's max TTL window, balances or
+  records disappear and the contract starts reading them as missing.
+- Funds are not stolen, but they can become permanently inaccessible.
+- Severity: **Low**
+
+---
+
 ## General Soroban Security Checklist
 
 | Check                               | Description                                                                                              |
@@ -201,3 +243,4 @@ pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
 | Admin gate on privileged fns        | `initialize`, `upgrade`, `set_admin`, `pause` must verify the caller is the stored admin                 |
 | Storage key ownership               | Storage keys that include an `Address` must only be written after `address.require_auth()`               |
 | No re-initialization                | Guard `initialize` with a check that the contract hasn't already been set up                             |
+| TTL renewal for persistent entries  | Long-lived state should call `persistent().extend_ttl(...)` on active reads/writes to avoid expiry      |

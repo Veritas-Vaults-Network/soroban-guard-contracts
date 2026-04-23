@@ -24,6 +24,7 @@ soroban-guard-contracts/
 ├── vulnerable/
 │   ├── missing_auth/       # transfer() with no require_auth()
 │   ├── unchecked_math/     # staking rewards with raw u64 arithmetic
+│   ├── missing_ttl/        # persistent balances expire because TTL is never renewed
 │   ├── unprotected_admin/  # set_admin() / upgrade() open to anyone
 │   └── unsafe_storage/     # public writes to any account's storage slot
 ├── secure/
@@ -45,6 +46,7 @@ soroban-guard-contracts/
 | Crate | Context | Vulnerability |
 |---|---|---|
 | `missing_auth` | Token contract | `transfer()` mutates balances without `require_auth()` |
+| `missing_ttl` | Token contract | Persistent balances expire because the contract never calls `extend_ttl()` |
 | `unchecked_math` | Staking contract | Reward calc uses raw `*` on `u64` — overflows silently |
 | `unprotected_admin` | Escrow contract | `set_admin()` and `upgrade()` have no caller check |
 | `unsafe_storage` | KYC registry | Any caller can write to any account's storage slot |
