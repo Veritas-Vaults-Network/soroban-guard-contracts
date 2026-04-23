@@ -27,9 +27,7 @@ impl SecureVault {
         // For this example we focus on the transfer fix.
         let key = DataKey::Balance(to);
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-        let new_balance = current
-            .checked_add(amount)
-            .expect("mint: balance overflow");
+        let new_balance = current.checked_add(amount).expect("mint: balance overflow");
         env.storage().persistent().set(&key, &new_balance);
     }
 

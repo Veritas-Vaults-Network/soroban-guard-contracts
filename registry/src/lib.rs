@@ -165,9 +165,7 @@ impl ScanRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{
-        map, testutils::Address as _, Address, Env, String,
-    };
+    use soroban_sdk::{map, testutils::Address as _, Address, Env, String};
 
     fn setup() -> (Env, Address, Address, Address) {
         let env = Env::default();
@@ -212,23 +210,19 @@ mod tests {
 
         client.add_scanner(&scanner);
 
-        client.submit_scan(
-            &scanner,
-            &target,
-            &String::from_str(&env, "hash1"),
-            &counts,
-        );
-        client.submit_scan(
-            &scanner,
-            &target,
-            &String::from_str(&env, "hash2"),
-            &counts,
-        );
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash1"), &counts);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash2"), &counts);
 
         let history = client.get_history(&target);
         assert_eq!(history.len(), 2);
-        assert_eq!(history.get(0).unwrap().findings_hash, String::from_str(&env, "hash1"));
-        assert_eq!(history.get(1).unwrap().findings_hash, String::from_str(&env, "hash2"));
+        assert_eq!(
+            history.get(0).unwrap().findings_hash,
+            String::from_str(&env, "hash1")
+        );
+        assert_eq!(
+            history.get(1).unwrap().findings_hash,
+            String::from_str(&env, "hash2")
+        );
     }
 
     /// Unregistered address cannot submit scans.
@@ -265,11 +259,6 @@ mod tests {
         assert!(!client.is_scanner(&scanner));
 
         // Attempting to submit after removal should panic.
-        client.submit_scan(
-            &scanner,
-            &target,
-            &String::from_str(&env, "hash"),
-            &counts,
-        );
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash"), &counts);
     }
 }

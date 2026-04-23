@@ -33,9 +33,7 @@ impl EscrowContract {
     pub fn set_admin(env: Env, new_admin: Address) {
         // ❌ Missing: let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         //             admin.require_auth();
-        env.storage()
-            .persistent()
-            .set(&DataKey::Admin, &new_admin);
+        env.storage().persistent().set(&DataKey::Admin, &new_admin);
     }
 
     /// VULNERABLE: no auth check before replacing contract WASM.
@@ -53,10 +51,7 @@ impl EscrowContract {
     }
 
     pub fn get_admin(env: Env) -> Address {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .unwrap()
+        env.storage().persistent().get(&DataKey::Admin).unwrap()
     }
 }
 
