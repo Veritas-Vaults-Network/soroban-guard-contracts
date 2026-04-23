@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "vulnerable/double_claim",
     "vulnerable/dust_griefing",
     "vulnerable/missing_auth",
     "vulnerable/missing_events",
