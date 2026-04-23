@@ -8,6 +8,7 @@ members = [
     "vulnerable/unchecked_math",
     "vulnerable/unprotected_admin",
     "vulnerable/unsafe_storage",
+    "vulnerable/reentrancy",
     "vulnerable/div_by_zero",
     "secure/secure_vault",
     "secure/protected_admin",
