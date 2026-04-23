@@ -13,6 +13,7 @@ members = [
     "vulnerable/flash_loan_no_check",
     "vulnerable/allowance_not_decremented",
     "vulnerable/leaky_events",
+    "vulnerable/no_slippage",
     "secure/secure_vault",
     "secure/protected_admin",
     "secure/secure_transfer",
