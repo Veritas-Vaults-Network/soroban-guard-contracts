@@ -89,9 +89,7 @@ impl ProtectedAdmin {
     }
 
     pub fn get_profile(env: Env, account: Address) -> Option<Profile> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Profile(account))
+        env.storage().persistent().get(&DataKey::Profile(account))
     }
 
     /// ✅ FIX 4: Only the account owner can delete their own profile.

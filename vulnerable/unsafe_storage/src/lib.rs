@@ -41,9 +41,7 @@ impl ProfileRegistry {
     }
 
     pub fn get_profile(env: Env, account: Address) -> Option<Profile> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Profile(account))
+        env.storage().persistent().get(&DataKey::Profile(account))
     }
 
     /// VULNERABLE: same pattern — anyone can wipe any account's profile.
