@@ -12,9 +12,11 @@ members = [
     "vulnerable/negative_transfer",
     "vulnerable/string_admin",
     "vulnerable/div_by_zero",
+    "vulnerable/unprotected_burn",
     "secure/secure_vault",
     "secure/protected_admin",
     "secure/secure_transfer",
+    "secure/secure_burn",
     "registry",
 ]
 
