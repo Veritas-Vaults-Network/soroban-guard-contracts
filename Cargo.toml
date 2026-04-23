@@ -11,6 +11,7 @@ members = [
     "vulnerable/reentrancy",
     "vulnerable/div_by_zero",
     "vulnerable/flash_loan_no_check",
+    "vulnerable/allowance_not_decremented",
     "secure/secure_vault",
     "secure/protected_admin",
     "secure/secure_transfer",
