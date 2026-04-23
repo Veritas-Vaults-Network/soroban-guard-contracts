@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "vulnerable/instant_oracle",
     "vulnerable/missing_auth",
     "vulnerable/missing_events",
     "vulnerable/missing_ttl",
@@ -13,6 +14,7 @@ members = [
     "vulnerable/string_admin",
     "vulnerable/div_by_zero",
     "secure/secure_vault",
+    "secure/protected_oracle",
     "secure/protected_admin",
     "secure/secure_transfer",
     "registry",
