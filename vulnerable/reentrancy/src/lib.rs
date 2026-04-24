@@ -33,6 +33,7 @@ pub struct ReentrantVault;
 
 #[contractimpl]
 impl ReentrantVault {
+    /// Deposit `amount` into the vault for `user`. Requires user auth.
     pub fn deposit(env: Env, user: Address, amount: i128) {
         user.require_auth();
         let key = DataKey::Balance(user.clone());
@@ -42,6 +43,11 @@ impl ReentrantVault {
             .set(&key, &(current + amount));
     }
 
+    /// VULNERABLE: calls external `notify_id` contract before updating `user` balance.
+    /// A malicious notifier can re-enter `withdraw` while the original balance is still intact.
+    ///
+    /// # Vulnerability
+    /// External call before state update. Impact: double-spend — attacker withdraws more than deposited.
     pub fn withdraw(env: Env, user: Address, amount: i128, notify_id: Address) {
         user.require_auth();
 
@@ -66,6 +72,7 @@ impl ReentrantVault {
             .set(&withdrawn_key, &(withdrawn + amount));
     }
 
+    /// Returns the current vault balance of `user`, defaulting to 0.
     pub fn get_balance(env: Env, user: Address) -> i128 {
         env.storage()
             .persistent()
@@ -73,6 +80,7 @@ impl ReentrantVault {
             .unwrap_or(0)
     }
 
+    /// Returns the total amount withdrawn by `user` across all calls, defaulting to 0.
     pub fn get_withdrawn(env: Env, user: Address) -> i128 {
         env.storage()
             .persistent()
@@ -86,6 +94,7 @@ pub struct NotifyContract;
 
 #[contractimpl]
 impl NotifyContract {
+    /// Configure the notify contract with vault address, self address, and reentrancy flag.
     pub fn configure(env: Env, vault_id: Address, notify_id: Address, reenter: bool) {
         env.storage()
             .persistent()
@@ -98,6 +107,7 @@ impl NotifyContract {
             .set(&NotifyDataKey::Reenter, &reenter);
     }
 
+    /// Callback invoked by the vault during withdrawal. If `reenter` is set, calls back into the vault.
     pub fn on_withdraw(env: Env, user: Address, amount: i128) {
         let reenter: bool = env
             .storage()

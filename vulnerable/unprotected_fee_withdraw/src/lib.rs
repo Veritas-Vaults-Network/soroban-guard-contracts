@@ -21,6 +21,7 @@ pub struct UnprotectedFeeWithdraw;
 
 #[contractimpl]
 impl UnprotectedFeeWithdraw {
+    /// Initialise the contract with an admin and zero fee balance. Guards against re-init.
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().persistent().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -29,7 +30,7 @@ impl UnprotectedFeeWithdraw {
         env.storage().persistent().set(&DataKey::Fees, &0i128);
     }
 
-    /// Simulate a swap that accumulates fees.
+    /// Simulate a swap that accumulates a fee proportional to `fee_rate` basis points.
     pub fn swap(env: Env, amount_in: i128, fee_rate: i128) {
         // In a real DEX, this would validate the swap and transfer tokens.
         // For this example, we just accumulate fees.
@@ -58,6 +59,7 @@ impl UnprotectedFeeWithdraw {
             .publish((symbol_short!("withdraw_fees"),), (recipient.clone(), fees));
     }
 
+    /// Returns the accumulated fee balance, defaulting to 0.
     pub fn get_fees(env: Env) -> i128 {
         env.storage()
             .persistent()
@@ -65,6 +67,7 @@ impl UnprotectedFeeWithdraw {
             .unwrap_or(0)
     }
 
+    /// Returns the stored admin address. Panics if not initialized.
     pub fn get_admin(env: Env) -> Address {
         env.storage()
             .persistent()

@@ -22,6 +22,10 @@ pub struct KeyCollisionContract;
 #[contractimpl]
 impl KeyCollisionContract {
     /// Store the global admin using the flat key `"admin"`.
+    ///
+    /// # Vulnerability
+    /// Uses a plain `symbol_short!` key with no namespace. Any user tag equal to `"admin"` will
+    /// overwrite this slot. Impact: privilege escalation or data corruption.
     pub fn set_admin(env: Env, admin: Address) {
         // ❌ Plain symbol — collides with any user key that is also "admin".
         env.storage()
@@ -29,6 +33,7 @@ impl KeyCollisionContract {
             .set(&symbol_short!("admin"), &admin);
     }
 
+    /// Returns the stored admin address, or `None` if not set.
     pub fn get_admin(env: Env) -> Option<Address> {
         env.storage()
             .persistent()
@@ -44,6 +49,7 @@ impl KeyCollisionContract {
         env.storage().persistent().set(&tag, &amount);
     }
 
+    /// Returns the balance stored under `tag`, or `None` if absent.
     pub fn get_balance(env: Env, tag: Symbol) -> Option<u64> {
         env.storage().persistent().get(&tag)
     }

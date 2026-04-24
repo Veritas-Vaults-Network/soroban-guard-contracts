@@ -67,6 +67,7 @@ impl VulnerableSignedExecutor {
         execute_payload(&env, &payload);
     }
 
+    /// Returns how many times `payload` has been executed.
     pub fn exec_count(env: Env, payload: Bytes) -> u32 {
         env.storage()
             .persistent()

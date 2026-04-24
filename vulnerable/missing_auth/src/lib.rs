@@ -19,7 +19,11 @@ pub struct TokenContract;
 
 #[contractimpl]
 impl TokenContract {
-    /// Mint tokens to an address (admin-only in a real contract — also unprotected here).
+    /// Mint tokens to `to`. In a real contract this would be admin-gated; here it is also
+    /// unprotected, but the primary vulnerability is in `transfer`.
+    ///
+    /// # Vulnerability
+    /// No admin auth check — any caller can mint arbitrary tokens.
     pub fn mint(env: Env, to: Address, amount: i128) {
         let key = DataKey::Balance(to);
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -49,6 +53,7 @@ impl TokenContract {
             .publish((symbol_short!("transfer"),), (from, to, amount));
     }
 
+    /// Returns the current balance of `account`. Defaults to 0 if no entry exists.
     pub fn balance(env: Env, account: Address) -> i128 {
         env.storage()
             .persistent()

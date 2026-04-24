@@ -25,8 +25,11 @@ pub struct SensitiveStorageContract;
 
 #[contractimpl]
 impl SensitiveStorageContract {
-    /// VULNERABLE: stores the raw secret_key in persistent storage.
-    /// Any observer can read DataKey::SecretKey directly from ledger state.
+    /// VULNERABLE: stores the raw `secret_key` in persistent storage.
+    /// All Stellar ledger state is public — any observer can read this value directly.
+    ///
+    /// # Vulnerability
+    /// Raw secret written to public ledger. Impact: secret is readable by anyone without auth.
     pub fn initialize(env: Env, admin: Address, secret_key: Bytes) {
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
@@ -36,8 +39,7 @@ impl SensitiveStorageContract {
             .set(&DataKey::SecretKey, &secret_key);
     }
 
-    /// Any caller can retrieve the secret — no auth required because the
-    /// ledger is already public; this just makes the exposure explicit.
+    /// Returns the raw secret from storage. No auth required — the ledger is already public.
     pub fn get_secret(env: Env) -> Bytes {
         env.storage()
             .persistent()
@@ -45,6 +47,7 @@ impl SensitiveStorageContract {
             .unwrap()
     }
 
+    /// Returns the stored admin address.
     pub fn get_admin(env: Env) -> Address {
         env.storage()
             .persistent()
@@ -56,7 +59,7 @@ impl SensitiveStorageContract {
     // Secure mirror — stores only a hash commitment, never the raw secret.
     // -------------------------------------------------------------------------
 
-    /// SECURE: stores a hash commitment instead of the raw secret.
+    /// SECURE: stores only a hash commitment — the raw secret never touches the ledger.
     pub fn initialize_secure(env: Env, admin: Address, secret_hash: Bytes) {
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Admin, &admin);
@@ -66,6 +69,7 @@ impl SensitiveStorageContract {
             .set(&DataKey::Commitment, &secret_hash);
     }
 
+    /// Returns the stored hash commitment.
     pub fn get_commitment(env: Env) -> Bytes {
         env.storage()
             .persistent()

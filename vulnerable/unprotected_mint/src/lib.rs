@@ -22,12 +22,16 @@ pub struct UnprotectedMintToken;
 
 #[contractimpl]
 impl UnprotectedMintToken {
+    /// Initialise the token with an admin address.
     pub fn initialize(env: Env, admin: Address) {
         env.storage().persistent().set(&DataKey::Admin, &admin);
     }
 
-    /// VULNERABLE: Mints `amount` tokens to `to` without verifying the caller
-    /// is the admin. No `admin.require_auth()` call — anyone can inflate supply.
+    /// VULNERABLE: mints `amount` tokens to `to` without verifying the caller is the admin.
+    /// Any account can inflate the token supply arbitrarily.
+    ///
+    /// # Vulnerability
+    /// Missing `admin.require_auth()`. Impact: unlimited supply inflation by any caller.
     pub fn mint(env: Env, to: Address, amount: i128) {
         // ❌ Missing: let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         //             admin.require_auth();
@@ -40,6 +44,7 @@ impl UnprotectedMintToken {
             .publish((symbol_short!("mint"),), (to, amount));
     }
 
+    /// Returns the balance of `account`, defaulting to 0.
     pub fn balance(env: Env, account: Address) -> i128 {
         env.storage()
             .persistent()
@@ -55,6 +60,7 @@ pub struct SecureMintToken;
 
 #[contractimpl]
 impl SecureMintToken {
+    /// Initialise the secure token with an admin address.
     pub fn initialize(env: Env, admin: Address) {
         env.storage().persistent().set(&DataKey::Admin, &admin);
     }
@@ -77,6 +83,7 @@ impl SecureMintToken {
             .publish((symbol_short!("mint"),), (to, amount));
     }
 
+    /// Returns the balance of `account` in the secure token, defaulting to 0.
     pub fn balance(env: Env, account: Address) -> i128 {
         env.storage()
             .persistent()

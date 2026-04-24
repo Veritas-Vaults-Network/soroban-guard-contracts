@@ -22,9 +22,11 @@ pub struct UnboundedStorage;
 
 #[contractimpl]
 impl UnboundedStorage {
-    /// VULNERABLE: Appends `item` to the list with no length cap.
-    /// Repeated calls grow the Vec indefinitely, increasing read/write cost
-    /// proportionally until the contract becomes unusable.
+    /// VULNERABLE: appends `item` to the list with no length cap.
+    /// Repeated calls grow the Vec indefinitely, increasing read/write cost until the contract is unusable.
+    ///
+    /// # Vulnerability
+    /// No length cap on Vec growth. Impact: DoS — contract becomes too expensive to call.
     pub fn append(env: Env, item: String) {
         let key = DataKey::List;
         let mut list: Vec<String> = env
@@ -37,6 +39,7 @@ impl UnboundedStorage {
         env.storage().persistent().set(&key, &list);
     }
 
+    /// Returns the full list of stored items.
     pub fn list(env: Env) -> Vec<String> {
         env.storage()
             .persistent()
@@ -44,6 +47,7 @@ impl UnboundedStorage {
             .unwrap_or(Vec::new(&env))
     }
 
+    /// Returns the number of items currently stored.
     pub fn len(env: Env) -> u32 {
         env.storage()
             .persistent()
@@ -62,8 +66,7 @@ pub struct BoundedStorage;
 
 #[contractimpl]
 impl BoundedStorage {
-    /// SECURE: Enforces MAX_HISTORY cap using a ring-buffer eviction strategy.
-    /// When the list is full the oldest entry is dropped before appending.
+    /// SECURE: appends `item` but evicts the oldest entry when `MAX_HISTORY` is reached.
     pub fn append(env: Env, item: String) {
         let key = DataKey::List;
         let mut list: Vec<String> = env
@@ -79,6 +82,7 @@ impl BoundedStorage {
         env.storage().persistent().set(&key, &list);
     }
 
+    /// Returns the full list of stored items (capped at MAX_HISTORY).
     pub fn list(env: Env) -> Vec<String> {
         env.storage()
             .persistent()
@@ -86,6 +90,7 @@ impl BoundedStorage {
             .unwrap_or(Vec::new(&env))
     }
 
+    /// Returns the number of items currently stored (at most MAX_HISTORY).
     pub fn len(env: Env) -> u32 {
         env.storage()
             .persistent()

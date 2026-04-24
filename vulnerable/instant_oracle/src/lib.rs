@@ -31,6 +31,7 @@ pub struct InstantOracle;
 
 #[contractimpl]
 impl InstantOracle {
+    /// Initialise the oracle with an admin. Guards against re-init.
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().persistent().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -55,6 +56,7 @@ impl InstantOracle {
             .unwrap_or(0)
     }
 
+    /// Returns the ledger sequence at which the price was last updated.
     pub fn updated_at(env: Env) -> u32 {
         env.storage()
             .persistent()

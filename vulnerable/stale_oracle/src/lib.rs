@@ -30,6 +30,7 @@ pub struct VulnerableLending;
 
 #[contractimpl]
 impl VulnerableLending {
+    /// Initialise the lending contract with an oracle address. Guards against re-init.
     pub fn init(env: Env, oracle_id: Address) {
         if env.storage().persistent().has(&DataKey::OracleId) {
             panic!("already initialized");
@@ -37,6 +38,7 @@ impl VulnerableLending {
         env.storage().persistent().set(&DataKey::OracleId, &oracle_id);
     }
 
+    /// Deposit `amount` as collateral for `user`. Requires user auth.
     pub fn deposit_collateral(env: Env, user: Address, amount: i128) {
         user.require_auth();
         let key = DataKey::Collateral(user);

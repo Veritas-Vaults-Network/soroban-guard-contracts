@@ -19,7 +19,7 @@ pub struct UnprotectedBurnToken;
 
 #[contractimpl]
 impl UnprotectedBurnToken {
-    /// Mint tokens to an address.
+    /// Mint `amount` tokens to `to`. Emits a `mint` event.
     pub fn mint(env: Env, to: Address, amount: i128) {
         let key = DataKey::Balance(to.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -47,6 +47,7 @@ impl UnprotectedBurnToken {
             .publish((symbol_short!("burn"),), (account, amount));
     }
 
+    /// Returns the balance of `account`, defaulting to 0.
     pub fn balance(env: Env, account: Address) -> i128 {
         env.storage()
             .persistent()

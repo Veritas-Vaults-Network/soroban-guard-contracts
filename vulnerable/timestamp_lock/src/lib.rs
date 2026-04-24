@@ -27,7 +27,8 @@ pub struct TimeLockedVault;
 
 #[contractimpl]
 impl TimeLockedVault {
-    /// Deposit funds and set an unlock timestamp (seconds since Unix epoch).
+    /// Deposit `amount` and set an unlock timestamp (seconds since Unix epoch).
+    /// Requires user auth.
     pub fn deposit(env: Env, user: Address, amount: i128, unlock_timestamp: u64) {
         user.require_auth();
 
@@ -64,6 +65,7 @@ impl TimeLockedVault {
         env.storage().persistent().remove(&unlock_key);
     }
 
+    /// Returns the balance of `user`, defaulting to 0.
     pub fn balance(env: Env, user: Address) -> i128 {
         env.storage()
             .persistent()
@@ -71,12 +73,14 @@ impl TimeLockedVault {
             .unwrap_or(0)
     }
 
+    /// Returns the unlock timestamp for `user`, or `None` if no lock exists.
     pub fn unlock_time(env: Env, user: Address) -> Option<u64> {
         env.storage()
             .persistent()
             .get(&DataKey::UnlockTime(user))
     }
 
+    /// Returns the current ledger timestamp in seconds since Unix epoch.
     pub fn current_timestamp(env: Env) -> u64 {
         env.ledger().timestamp()
     }

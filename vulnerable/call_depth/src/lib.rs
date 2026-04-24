@@ -31,6 +31,9 @@ impl CallDepthContract {
     /// VULNERABLE: recurses via cross-contract call with no depth guard.
     /// Will panic at the Soroban call depth limit mid-execution; any state
     /// updates below the recursive call may never be reached.
+    ///
+    /// # Vulnerability
+    /// No depth check before recursing. Impact: panic mid-execution leaves state partially updated.
     pub fn process(env: Env, contract_id: Address, depth: u32) {
         // ❌ No depth check — will hit Soroban call depth limit and panic
         if depth > 0 {
@@ -73,6 +76,7 @@ impl CallDepthContract {
             .set(&DataKey::ProcessedCount, &(count + 1));
     }
 
+    /// Returns `true` if the contract has been processed at least once.
     pub fn is_processed(env: Env) -> bool {
         env.storage()
             .persistent()
@@ -80,6 +84,7 @@ impl CallDepthContract {
             .unwrap_or(false)
     }
 
+    /// Returns the total number of times `process` or `process_safe` has completed.
     pub fn processed_count(env: Env) -> u32 {
         env.storage()
             .persistent()

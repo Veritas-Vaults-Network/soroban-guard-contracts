@@ -45,11 +45,17 @@ pub struct VulnerableToken;
 
 #[contractimpl]
 impl VulnerableToken {
+    /// Mint `amount` tokens to `to`. No auth check — for test setup.
     pub fn mint(env: Env, to: Address, amount: i128) {
         let current = get_balance(&env, &to);
         set_balance(&env, &to, current + amount);
     }
 
+    /// VULNERABLE: transfers `amount` and emits post-transfer balances of both parties.
+    /// Any ledger observer can reconstruct full account histories from the event stream.
+    ///
+    /// # Vulnerability
+    /// Event payload includes `new_from_balance` and `new_to_balance`. Impact: full privacy leak.
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         from.require_auth();
 
@@ -71,6 +77,7 @@ impl VulnerableToken {
         );
     }
 
+    /// Returns the balance of `account`, defaulting to 0.
     pub fn balance(env: Env, account: Address) -> i128 {
         get_balance(&env, &account)
     }

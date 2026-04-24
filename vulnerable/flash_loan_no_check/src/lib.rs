@@ -91,7 +91,7 @@ pub struct FlashLoanNoCheck;
 
 #[contractimpl]
 impl FlashLoanNoCheck {
-    /// Seed the lending pool.
+    /// Seed the lending pool with `amount` tokens from `from`. Requires from auth.
     pub fn deposit(env: Env, from: Address, amount: i128) {
         from.require_auth();
         let current: i128 = env
@@ -130,6 +130,7 @@ impl FlashLoanNoCheck {
         // ❌ Missing: assert pool balance >= pool_before
     }
 
+    /// Returns the current pool balance, defaulting to 0.
     pub fn pool_balance(env: Env) -> i128 {
         env.storage()
             .persistent()
