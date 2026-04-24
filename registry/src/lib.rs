@@ -10,7 +10,7 @@
 //!   then checked against the approved-scanner registry.
 
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Map, String, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Map, String, Vec};
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,11 +66,16 @@ impl ScanRegistry {
     ///
     /// # Panics
     /// Panics if the caller is not the admin.
+    ///
+    /// # Events
+    /// Emits `("scanner", "added", scanner)`.
     pub fn add_scanner(env: Env, scanner: Address) {
         Self::require_admin(&env);
         env.storage()
             .persistent()
-            .set(&DataKey::Scanner(scanner), &true);
+            .set(&DataKey::Scanner(scanner.clone()), &true);
+        env.events()
+            .publish((symbol_short!("scanner"), symbol_short!("added")), scanner);
     }
 
     /// Remove a scanner from the approved list.
@@ -80,11 +85,16 @@ impl ScanRegistry {
     ///
     /// # Panics
     /// Panics if the caller is not the admin.
+    ///
+    /// # Events
+    /// Emits `("scanner", "removed", scanner)`.
     pub fn remove_scanner(env: Env, scanner: Address) {
         Self::require_admin(&env);
         env.storage()
             .persistent()
-            .set(&DataKey::Scanner(scanner), &false);
+            .set(&DataKey::Scanner(scanner.clone()), &false);
+        env.events()
+            .publish((symbol_short!("scanner"), symbol_short!("removed")), scanner);
     }
 
     /// Check whether an address is an approved scanner.
@@ -108,6 +118,9 @@ impl ScanRegistry {
     /// `scanner` must be a verified scanner address and must have signed this
     /// transaction. `findings_hash` is a hex-encoded SHA-256 of the full
     /// findings JSON. `severity_counts` maps severity labels to counts.
+    ///
+    /// # Events
+    /// Emits `("scan", "submitted", (scanner, contract_address, findings_hash))`.
     pub fn submit_scan(
         env: Env,
         scanner: Address,
@@ -129,9 +142,9 @@ impl ScanRegistry {
         }
 
         let result = ScanResult {
-            scanner,
+            scanner: scanner.clone(),
             timestamp: env.ledger().timestamp(),
-            findings_hash,
+            findings_hash: findings_hash.clone(),
             severity_counts,
         };
 
@@ -141,7 +154,7 @@ impl ScanRegistry {
             .set(&DataKey::LatestScan(contract_address.clone()), &result);
 
         // Append to history.
-        let history_key = DataKey::ScanHistory(contract_address);
+        let history_key = DataKey::ScanHistory(contract_address.clone());
         let mut history: Vec<ScanResult> = env
             .storage()
             .persistent()
@@ -149,6 +162,12 @@ impl ScanRegistry {
             .unwrap_or(Vec::new(&env));
         history.push_back(result);
         env.storage().persistent().set(&history_key, &history);
+
+        // Emit structured event for off-chain indexers.
+        env.events().publish(
+            (symbol_short!("scan"), symbol_short!("submitted")),
+            (scanner, contract_address, findings_hash),
+        );
     }
 
     // ── Queries ──────────────────────────────────────────────────────────────
@@ -212,7 +231,7 @@ impl ScanRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{map, testutils::Address as _, Address, Env, String};
+    use soroban_sdk::{map, testutils::Address as _, testutils::Events, Address, Env, String};
 
     fn setup() -> (Env, Address, Address, Address) {
         let env = Env::default();
@@ -307,5 +326,69 @@ mod tests {
 
         // Attempting to submit after removal should panic.
         client.submit_scan(&scanner, &target, &String::from_str(&env, "hash"), &counts);
+    }
+
+    #[test]
+    fn test_submit_scan_emits_event() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let target = Address::generate(&env);
+        let hash = String::from_str(&env, "deadbeef");
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "high"), 1u32)];
+
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &target, &hash, &counts);
+
+        let events = env.events().all();
+        // Last event should be the scan submitted event.
+        let last = events.last().unwrap();
+        assert_eq!(
+            last.1,
+            soroban_sdk::vec![
+                &env,
+                soroban_sdk::Val::from(symbol_short!("scan")),
+                soroban_sdk::Val::from(symbol_short!("submitted")),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_add_scanner_emits_event() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        client.add_scanner(&scanner);
+
+        let events = env.events().all();
+        let last = events.last().unwrap();
+        assert_eq!(
+            last.1,
+            soroban_sdk::vec![
+                &env,
+                soroban_sdk::Val::from(symbol_short!("scanner")),
+                soroban_sdk::Val::from(symbol_short!("added")),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_remove_scanner_emits_event() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        client.add_scanner(&scanner);
+        client.remove_scanner(&scanner);
+
+        let events = env.events().all();
+        let last = events.last().unwrap();
+        assert_eq!(
+            last.1,
+            soroban_sdk::vec![
+                &env,
+                soroban_sdk::Val::from(symbol_short!("scanner")),
+                soroban_sdk::Val::from(symbol_short!("removed")),
+            ]
+        );
     }
 }
