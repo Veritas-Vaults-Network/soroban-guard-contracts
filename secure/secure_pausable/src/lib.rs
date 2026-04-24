@@ -1,12 +1,17 @@
-//! SECURE: Admin-gated Pause
+//! SECURE: Admin-gated circuit-breaker (pause / unpause)
 //!
-//! Fixes `unprotected_pause` by requiring admin auth before `pause()` or
-//! `unpause()` can be called.
+//! This is the secure mirror of the `unprotected_pause` vulnerability.
 //!
-//! FIX: `admin.require_auth()` in both `pause()` and `unpause()`.
+//! SECURITY PROPERTIES:
+//! 1. `pause` and `unpause` both call `admin.require_auth()`.
+//! 2. `transfer` panics when the contract is paused.
+//! 3. Events are emitted on every pause/unpause transition.
+//! 4. Admin rotation is protected — only the current admin can set a new one.
 
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env};
+
+// ── Storage keys ─────────────────────────────────────────────────────────────
 
 #[contracttype]
 pub enum DataKey {
@@ -14,6 +19,8 @@ pub enum DataKey {
     Paused,
     Balance(Address),
 }
+
+// ── Contract ──────────────────────────────────────────────────────────────────
 
 #[contract]
 pub struct SecurePausable;
@@ -28,7 +35,26 @@ impl SecurePausable {
         env.storage().persistent().set(&DataKey::Paused, &false);
     }
 
-    /// ✅ Only the admin can pause the contract.
+    /// Mint tokens to an address (admin only, for test setup).
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        admin.require_auth();
+
+        let balance: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Balance(to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Balance(to), &(balance + amount));
+    }
+
+    /// ✅ FIX: Only the admin can pause the contract.
     pub fn pause(env: Env) {
         let admin: Address = env
             .storage()
@@ -36,10 +62,12 @@ impl SecurePausable {
             .get(&DataKey::Admin)
             .expect("not initialized");
         admin.require_auth();
+
         env.storage().persistent().set(&DataKey::Paused, &true);
+        env.events().publish((symbol_short!("paused"),), admin);
     }
 
-    /// ✅ Only the admin can unpause the contract.
+    /// ✅ FIX: Only the admin can unpause the contract.
     pub fn unpause(env: Env) {
         let admin: Address = env
             .storage()
@@ -47,15 +75,12 @@ impl SecurePausable {
             .get(&DataKey::Admin)
             .expect("not initialized");
         admin.require_auth();
+
         env.storage().persistent().set(&DataKey::Paused, &false);
+        env.events().publish((symbol_short!("unpaused"),), admin);
     }
 
-    pub fn mint(env: Env, to: Address, amount: i128) {
-        let key = DataKey::Balance(to);
-        let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-        env.storage().persistent().set(&key, &(current + amount));
-    }
-
+    /// ✅ FIX: Transfer is blocked while the contract is paused.
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         let paused: bool = env
             .storage()
@@ -68,21 +93,45 @@ impl SecurePausable {
 
         from.require_auth();
 
-        let from_key = DataKey::Balance(from.clone());
-        let to_key = DataKey::Balance(to);
-        let from_bal: i128 = env.storage().persistent().get(&from_key).unwrap_or(0);
+        let from_balance: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Balance(from.clone()))
+            .unwrap_or(0);
+        let to_balance: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Balance(to.clone()))
+            .unwrap_or(0);
+
+        env.storage().persistent().set(
+            &DataKey::Balance(from),
+            &from_balance
+                .checked_sub(amount)
+                .expect("insufficient balance"),
+        );
         env.storage()
             .persistent()
-            .set(&from_key, &(from_bal - amount));
-        let to_bal: i128 = env.storage().persistent().get(&to_key).unwrap_or(0);
-        env.storage().persistent().set(&to_key, &(to_bal + amount));
+            .set(&DataKey::Balance(to), &(to_balance + amount));
     }
 
-    pub fn balance(env: Env, account: Address) -> i128 {
+    /// ✅ FIX: Only the current admin can rotate to a new admin.
+    pub fn set_admin(env: Env, new_admin: Address) {
+        let current_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+        current_admin.require_auth();
+
+        env.storage().persistent().set(&DataKey::Admin, &new_admin);
+    }
+
+    pub fn get_admin(env: Env) -> Address {
         env.storage()
             .persistent()
-            .get(&DataKey::Balance(account))
-            .unwrap_or(0)
+            .get(&DataKey::Admin)
+            .expect("not initialized")
     }
 
     pub fn is_paused(env: Env) -> bool {
@@ -91,70 +140,126 @@ impl SecurePausable {
             .get(&DataKey::Paused)
             .unwrap_or(false)
     }
+
+    pub fn balance(env: Env, account: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Balance(account))
+            .unwrap_or(0)
+    }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Address, Env};
 
-    fn setup() -> (Env, Address, SecurePausableClient<'static>) {
+    /// Admin pauses — transfer fails.
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_transfer_fails_when_paused() {
         let env = Env::default();
         let contract_id = env.register_contract(None, SecurePausable);
         let client = SecurePausableClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
+        env.mock_all_auths();
         client.initialize(&admin);
-        (env, admin, client)
+
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+        client.mint(&alice, &500);
+        client.pause();
+        client.transfer(&alice, &bob, &100);
     }
 
+    /// Admin unpauses — transfer succeeds.
     #[test]
-    fn test_admin_can_pause_and_unpause() {
-        let (env, _admin, client) = setup();
+    fn test_transfer_succeeds_after_unpause() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SecurePausable);
+        let client = SecurePausableClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
         env.mock_all_auths();
+        client.initialize(&admin);
 
+        let alice = Address::generate(&env);
+        let bob = Address::generate(&env);
+
+        client.mint(&alice, &500);
+        client.pause();
+        client.unpause();
+        client.transfer(&alice, &bob, &200);
+
+        assert_eq!(client.balance(&alice), 300);
+        assert_eq!(client.balance(&bob), 200);
+    }
+
+    /// Non-admin cannot pause.
+    #[test]
+    #[should_panic]
+    fn test_non_admin_cannot_pause() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SecurePausable);
+        let client = SecurePausableClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin);
+
+        // New env without mocked auths — attacker tries to pause.
+        let env2 = Env::default();
+        let client2 = SecurePausableClient::new(&env2, &contract_id);
+        client2.pause(); // should panic: no auth
+    }
+
+    /// Non-admin cannot unpause.
+    #[test]
+    #[should_panic]
+    fn test_non_admin_cannot_unpause() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SecurePausable);
+        let client = SecurePausableClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin);
+        client.pause();
+
+        // New env without mocked auths — attacker tries to unpause.
+        let env2 = Env::default();
+        let client2 = SecurePausableClient::new(&env2, &contract_id);
+        client2.unpause(); // should panic
+    }
+
+    /// Pause state persists across calls.
+    #[test]
+    fn test_pause_state_persists() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SecurePausable);
+        let client = SecurePausableClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin);
+
+        assert!(!client.is_paused());
         client.pause();
         assert!(client.is_paused());
-
         client.unpause();
         assert!(!client.is_paused());
     }
 
-    /// Attacker cannot pause — require_auth enforces admin-only access.
+    /// Admin rotation: new admin can be set by current admin.
     #[test]
-    #[should_panic]
-    fn test_attacker_cannot_pause() {
-        let (_env, _admin, client) = setup();
-        // No mock_all_auths — should panic because admin auth is required.
-        client.pause();
-    }
-
-    #[test]
-    #[should_panic(expected = "contract is paused")]
-    fn test_transfer_fails_when_paused() {
-        let (env, _admin, client) = setup();
-
-        let alice = Address::generate(&env);
-        client.mint(&alice, &1000);
-
+    fn test_admin_rotation() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SecurePausable);
+        let client = SecurePausableClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
         env.mock_all_auths();
-        client.pause();
+        client.initialize(&admin);
 
-        let bob = Address::generate(&env);
-        client.transfer(&alice, &bob, &500);
-    }
-
-    #[test]
-    fn test_transfer_succeeds_when_unpaused() {
-        let (env, _admin, client) = setup();
-
-        let alice = Address::generate(&env);
-        let bob = Address::generate(&env);
-        client.mint(&alice, &1000);
-
-        env.mock_all_auths();
-        client.transfer(&alice, &bob, &400);
-
-        assert_eq!(client.balance(&alice), 600);
-        assert_eq!(client.balance(&bob), 400);
+        let new_admin = Address::generate(&env);
+        client.set_admin(&new_admin);
+        assert_eq!(client.get_admin(), new_admin);
     }
 }

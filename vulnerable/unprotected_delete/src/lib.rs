@@ -39,9 +39,7 @@ impl DataRegistry {
     /// any address and delete that account's data without owning it.
     pub fn delete_entry(env: Env, account: Address) {
         // ❌ Missing: account.require_auth();
-        env.storage()
-            .persistent()
-            .remove(&DataKey::Entry(account));
+        env.storage().persistent().remove(&DataKey::Entry(account));
     }
 }
 

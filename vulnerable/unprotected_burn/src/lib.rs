@@ -26,8 +26,7 @@ impl UnprotectedBurnToken {
         env.storage()
             .persistent()
             .set(&key, &(current.checked_add(amount).unwrap()));
-        env.events()
-            .publish((symbol_short!("mint"),), (to, amount));
+        env.events().publish((symbol_short!("mint"),), (to, amount));
     }
 
     /// VULNERABLE: Burns `amount` tokens from `account` without verifying
