@@ -46,6 +46,10 @@ pub struct ScanRegistry;
 impl ScanRegistry {
     // ── Initialisation ───────────────────────────────────────────────────────
 
+    /// Initialize the registry with an admin address.
+    ///
+    /// # Panics
+    /// Panics if the registry has already been initialized.
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().persistent().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -55,6 +59,13 @@ impl ScanRegistry {
 
     // ── Scanner management (admin only) ──────────────────────────────────────
 
+    /// Add a scanner to the approved list.
+    ///
+    /// # Arguments
+    /// * `scanner` - The address to approve for submitting scans.
+    ///
+    /// # Panics
+    /// Panics if the caller is not the admin.
     pub fn add_scanner(env: Env, scanner: Address) {
         Self::require_admin(&env);
         env.storage()
@@ -62,6 +73,13 @@ impl ScanRegistry {
             .set(&DataKey::Scanner(scanner), &true);
     }
 
+    /// Remove a scanner from the approved list.
+    ///
+    /// # Arguments
+    /// * `scanner` - The address to remove from the approved list.
+    ///
+    /// # Panics
+    /// Panics if the caller is not the admin.
     pub fn remove_scanner(env: Env, scanner: Address) {
         Self::require_admin(&env);
         env.storage()
@@ -69,6 +87,13 @@ impl ScanRegistry {
             .set(&DataKey::Scanner(scanner), &false);
     }
 
+    /// Check whether an address is an approved scanner.
+    ///
+    /// # Arguments
+    /// * `scanner` - The address to check.
+    ///
+    /// # Returns
+    /// `true` if the scanner is approved, `false` otherwise.
     pub fn is_scanner(env: Env, scanner: Address) -> bool {
         env.storage()
             .persistent()
@@ -128,12 +153,27 @@ impl ScanRegistry {
 
     // ── Queries ──────────────────────────────────────────────────────────────
 
+    /// Retrieve the latest scan result for a contract address.
+    ///
+    /// # Arguments
+    /// * `contract_address` - The contract address to look up.
+    ///
+    /// # Returns
+    /// The most recent `ScanResult`, or `None` if no scan exists.
     pub fn get_scan(env: Env, contract_address: Address) -> Option<ScanResult> {
         env.storage()
             .persistent()
             .get(&DataKey::LatestScan(contract_address))
     }
 
+    /// Retrieve the full scan history for a contract address.
+    ///
+    /// # Arguments
+    /// * `contract_address` - The contract address to look up.
+    ///
+    /// # Returns
+    /// A vector of all `ScanResult`s submitted for this contract, ordered oldest
+    /// to newest.
     pub fn get_history(env: Env, contract_address: Address) -> Vec<ScanResult> {
         env.storage()
             .persistent()
@@ -141,6 +181,13 @@ impl ScanRegistry {
             .unwrap_or(Vec::new(&env))
     }
 
+    /// Return the admin address of the registry.
+    ///
+    /// # Returns
+    /// The admin `Address`.
+    ///
+    /// # Panics
+    /// Panics if the registry has not been initialized.
     pub fn get_admin(env: Env) -> Address {
         env.storage()
             .persistent()
