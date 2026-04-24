@@ -1,5 +1,8 @@
 # soroban-guard-contracts
 
+[![CI](https://github.com/magaret457/soroban-guard-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/magaret457/soroban-guard-contracts/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/magaret457/soroban-guard-contracts/branch/main/graph/badge.svg)](https://codecov.io/gh/magaret457/soroban-guard-contracts)
+
 A library of sample Soroban smart contracts — both vulnerable and secure — used
 for testing the [Soroban Guard](https://github.com/Veritas-Vaults-Network/soroban-guard-core)
 scanner, plus an on-chain scan result registry.
