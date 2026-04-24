@@ -23,6 +23,7 @@ members = [
     "vulnerable/allowance_not_decremented",
     "vulnerable/leaky_events",
     "vulnerable/no_slippage",
+    "vulnerable/unsafe_cast",
     "secure/secure_vault",
     "secure/protected_admin",
     "secure/secure_transfer",
