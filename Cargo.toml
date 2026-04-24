@@ -1,21 +1,31 @@
 [workspace]
 resolver = "2"
 members = [
+    "vulnerable/admin_rugpull",
+    "vulnerable/scanner_impersonation",
     "vulnerable/missing_auth",
+    "vulnerable/zero_admin",
     "vulnerable/missing_events",
     "vulnerable/missing_ttl",
     "vulnerable/timestamp_lock",
     "vulnerable/unchecked_math",
     "vulnerable/unprotected_admin",
+    "vulnerable/unprotected_emergency_withdraw",
     "vulnerable/unsafe_storage",
+    "vulnerable/zero_deposit",
     "vulnerable/reentrancy",
+    "vulnerable/dust_griefing",
     "vulnerable/negative_transfer",
     "vulnerable/string_admin",
     "vulnerable/div_by_zero",
-    "vulnerable/zero_stake",
+    "vulnerable/flash_loan_no_check",
+    "vulnerable/allowance_not_decremented",
+    "vulnerable/leaky_events",
+    "vulnerable/no_slippage",
     "secure/secure_vault",
     "secure/protected_admin",
     "secure/secure_transfer",
+    "secure/secure_burn",
     "registry",
 ]
 
