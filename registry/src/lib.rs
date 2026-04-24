@@ -229,6 +229,66 @@ impl ScanRegistry {
             .unwrap_or(Vec::new(&env))
     }
 
+    /// Return the total number of scan results stored for a contract address.
+    ///
+    /// # Arguments
+    /// * `contract_address` - The contract address to look up.
+    ///
+    /// # Returns
+    /// The number of `ScanResult`s in the history (0 if none).
+    pub fn get_history_len(env: Env, contract_address: Address) -> u32 {
+        let history: Vec<ScanResult> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ScanHistory(contract_address))
+            .unwrap_or(Vec::new(&env));
+        history.len()
+    }
+
+    /// Retrieve a single page of scan history for a contract address.
+    ///
+    /// Results are ordered oldest to newest. Pages are zero-indexed.
+    /// If `page * page_size` is beyond the end of the history, an empty
+    /// vector is returned.
+    ///
+    /// # Arguments
+    /// * `contract_address` - The contract address to look up.
+    /// * `page`             - Zero-based page index.
+    /// * `page_size`        - Number of results per page. Must be > 0.
+    ///
+    /// # Panics
+    /// Panics if `page_size` is 0.
+    pub fn get_history_page(
+        env: Env,
+        contract_address: Address,
+        page: u32,
+        page_size: u32,
+    ) -> Vec<ScanResult> {
+        if page_size == 0 {
+            panic!("page_size must be greater than zero");
+        }
+
+        let history: Vec<ScanResult> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ScanHistory(contract_address))
+            .unwrap_or(Vec::new(&env));
+
+        let total = history.len();
+        let start = page.saturating_mul(page_size);
+
+        if start >= total {
+            return Vec::new(&env);
+        }
+
+        let end = (start + page_size).min(total);
+        let mut page_results: Vec<ScanResult> = Vec::new(&env);
+        for i in start..end {
+            page_results.push_back(history.get(i).unwrap());
+        }
+        page_results
+    }
+
     /// Return the admin address of the registry.
     ///
     /// # Returns
@@ -396,6 +456,85 @@ mod tests {
 
         client.dispute_scan(&scanner);
         assert_eq!(client.get_scanner_score(&scanner), 0);
+    }
+
+    // ── Pagination tests ──────────────────────────────────────────────────────
+
+    fn submit_n_scans(client: &ScanRegistryClient, scanner: &Address, target: &Address, n: u32, env: &Env) {
+        // Pre-defined hash labels — supports up to 8 scans in tests.
+        let hashes = ["hash0", "hash1", "hash2", "hash3", "hash4", "hash5", "hash6", "hash7"];
+        let counts: Map<String, u32> = map![env, (String::from_str(env, "low"), 0u32)];
+        for i in 0..n {
+            let hash = String::from_str(env, hashes[i as usize]);
+            client.submit_scan(scanner, target, &hash, &counts);
+        }
+    }
+
+    #[test]
+    fn test_pagination_page_zero_works() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+
+        client.add_scanner(&scanner);
+        submit_n_scans(&client, &scanner, &target, 5, &env);
+
+        let page = client.get_history_page(&target, &0, &3);
+        assert_eq!(page.len(), 3);
+        assert_eq!(page.get(0).unwrap().findings_hash, String::from_str(&env, "hash0"));
+        assert_eq!(page.get(2).unwrap().findings_hash, String::from_str(&env, "hash2"));
+    }
+
+    #[test]
+    fn test_pagination_last_page_partial() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+
+        client.add_scanner(&scanner);
+        submit_n_scans(&client, &scanner, &target, 5, &env);
+
+        // page 1 with page_size 3 → items [3, 4] (2 items)
+        let page = client.get_history_page(&target, &1, &3);
+        assert_eq!(page.len(), 2);
+        assert_eq!(page.get(0).unwrap().findings_hash, String::from_str(&env, "hash3"));
+        assert_eq!(page.get(1).unwrap().findings_hash, String::from_str(&env, "hash4"));
+    }
+
+    #[test]
+    fn test_pagination_out_of_range_returns_empty() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+
+        client.add_scanner(&scanner);
+        submit_n_scans(&client, &scanner, &target, 3, &env);
+
+        // page 5 is well beyond the 3 items
+        let page = client.get_history_page(&target, &5, &3);
+        assert_eq!(page.len(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "page_size must be greater than zero")]
+    fn test_pagination_page_size_zero_panics() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+        client.get_history_page(&target, &0, &0);
+    }
+
+    #[test]
+    fn test_get_history_len() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+
+        client.add_scanner(&scanner);
+        assert_eq!(client.get_history_len(&target), 0);
+
+        submit_n_scans(&client, &scanner, &target, 4, &env);
+        assert_eq!(client.get_history_len(&target), 4);
     }
 
     #[test]
