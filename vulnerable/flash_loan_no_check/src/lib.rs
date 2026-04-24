@@ -1,165 +1,242 @@
-//! VULNERABLE: Flash loan lender without repayment checks.
+//! VULNERABLE: Flash Loan with No Repayment Check
 //!
-//! This contract exposes `flash_loan`, which transfers funds and invokes an
-//! external callback without verifying the loan was returned.
-//! `flash_loan_secure` fixes the vulnerability by verifying the lender's
-//! balance after the callback.
+//! A flash loan contract that transfers funds to a borrower and invokes their
+//! callback, but never asserts that the borrowed amount was returned within
+//! the same transaction. This allows a borrower to permanently drain the
+//! lending pool without repaying.
+//!
+//! VULNERABILITY: `flash_loan()` calls the borrower's `on_flash_loan` callback
+//! but performs no balance check afterward — funds can be extracted for free.
+//!
+//! SECURE MIRROR: `secure::SecureFlashLoan` snapshots the pool balance before
+//! the callback and panics if it has not been fully restored after.
+//!
+//! # Repayment model
+//!
+//! Soroban forbids re-entrant calls, so a borrower cannot call back into the
+//! lending contract while `flash_loan` is on the call stack. Repayment is
+//! therefore modelled via a separate `RepaymentLedger` contract (not in the
+//! call stack) that the borrower writes to during the callback. The lending
+//! contract reads the ledger *after* the callback returns to determine whether
+//! the loan was repaid.
 
 #![no_std]
-
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+pub mod secure;
+
+// ── Storage keys ──────────────────────────────────────────────────────────────
 
 #[contracttype]
 pub enum DataKey {
-    Balance(Address),
-    Lender,
+    PoolBalance,
+    /// Address of the RepaymentLedger contract used in tests.
+    LedgerContract,
 }
+
+// ── RepaymentLedger: a neutral third-party contract ──────────────────────────
+//
+// Neither the lender nor the borrower — so it is never on the call stack when
+// either of them calls it, avoiding the re-entry restriction.
+
+#[contracttype]
+pub enum LedgerKey {
+    Repaid,
+}
+
+#[contract]
+pub struct RepaymentLedger;
+
+#[contractimpl]
+impl RepaymentLedger {
+    /// Borrower calls this to record that it has repaid `amount`.
+    pub fn record_repayment(env: Env, amount: i128) {
+        let current: i128 = env
+            .storage()
+            .temporary()
+            .get(&LedgerKey::Repaid)
+            .unwrap_or(0);
+        env.storage()
+            .temporary()
+            .set(&LedgerKey::Repaid, &(current + amount));
+    }
+
+    /// Lender calls this to read (and clear) the recorded repayment.
+    pub fn consume_repayment(env: Env) -> i128 {
+        let amount: i128 = env
+            .storage()
+            .temporary()
+            .get(&LedgerKey::Repaid)
+            .unwrap_or(0);
+        env.storage().temporary().remove(&LedgerKey::Repaid);
+        amount
+    }
+}
+
+// ── Borrower callback interface ───────────────────────────────────────────────
+
+pub mod callback {
+    use soroban_sdk::{contractclient, Address, Env};
+
+    #[contractclient(name = "BorrowerClient")]
+    pub trait Borrower {
+        fn on_flash_loan(env: Env, loan_contract: Address, amount: i128);
+    }
+}
+
+// ── Vulnerable lending contract ───────────────────────────────────────────────
 
 #[contract]
 pub struct FlashLoanNoCheck;
 
-#[contract]
-pub trait FlashLoanReceiver {
-    fn on_flash_loan(&self, amount: i128);
-}
-
-pub mod callback {
-    pub use super::FlashLoanReceiverClient as Client;
-}
-
-#[contract]
-pub struct Borrower;
-
-#[contracttype]
-pub enum BorrowerConfigKey {
-    Lender,
-    BorrowerAddress,
-    ShouldRepay,
-}
-
 #[contractimpl]
 impl FlashLoanNoCheck {
-    fn get_balance(env: &Env, account: Address) -> i128 {
+    /// Seed the lending pool.
+    pub fn deposit(env: Env, from: Address, amount: i128) {
+        from.require_auth();
+        let current: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PoolBalance)
+            .unwrap_or(0);
         env.storage()
             .persistent()
-            .get(&DataKey::Balance(account))
+            .set(&DataKey::PoolBalance, &(current + amount));
+    }
+
+    /// Issue a flash loan of `amount` to `borrower`.
+    ///
+    /// ❌ Calls the borrower callback but NEVER checks that the pool balance
+    ///    was restored — the borrower can keep the funds.
+    pub fn flash_loan(env: Env, borrower: Address, amount: i128) {
+        let pool: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PoolBalance)
+            .unwrap_or(0);
+        assert!(pool >= amount, "insufficient pool liquidity");
+
+        // Deduct from pool before callback (simulates transfer out).
+        env.storage()
+            .persistent()
+            .set(&DataKey::PoolBalance, &(pool - amount));
+
+        // Invoke borrower — they are supposed to repay, but we never verify.
+        callback::BorrowerClient::new(&env, &borrower).on_flash_loan(
+            &env.current_contract_address(),
+            &amount,
+        );
+
+        // ❌ Missing: assert pool balance >= pool_before
+    }
+
+    pub fn pool_balance(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PoolBalance)
             .unwrap_or(0)
     }
-
-    fn set_balance(env: &Env, account: Address, amount: i128) {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Balance(account), &amount);
-    }
-
-    pub fn initialize(env: Env, lender_address: Address) {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Lender, &lender_address);
-    }
-
-    fn get_lender_address(env: &Env) -> Address {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Lender)
-            .expect("lender not initialized")
-    }
-
-    pub fn mint(env: Env, to: Address, amount: i128) {
-        let current = Self::get_balance(&env, to.clone());
-        let new_balance = current.checked_add(amount).expect("mint: overflow");
-        Self::set_balance(&env, to, new_balance);
-    }
-
-    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-        let from_balance = Self::get_balance(&env, from.clone());
-        let to_balance = Self::get_balance(&env, to.clone());
-
-        let new_from = from_balance
-            .checked_sub(amount)
-            .expect("transfer: insufficient balance");
-        let new_to = to_balance.checked_add(amount).expect("transfer: overflow");
-
-        Self::set_balance(&env, from, new_from);
-        Self::set_balance(&env, to, new_to);
-    }
-
-    pub fn balance(env: Env, account: Address) -> i128 {
-        Self::get_balance(&env, account)
-    }
-
-    pub fn flash_loan(env: Env, borrower: Address, amount: i128) {
-        let lender_address = Self::get_lender_address(&env);
-        let lender_balance = Self::get_balance(&env, lender_address.clone());
-        assert!(
-            lender_balance >= amount,
-            "flash_loan: insufficient liquidity"
-        );
-
-        // ❌ VULNERABLE: funds are transferred to the borrower, but we do not
-        // verify that the loan was returned after the callback.
-        Self::transfer(env.clone(), lender_address.clone(), borrower.clone(), amount);
-        callback::Client::new(&env, &borrower).on_flash_loan(&amount);
-    }
-
-    pub fn flash_loan_secure(env: Env, borrower: Address, amount: i128) {
-        let lender_address = Self::get_lender_address(&env);
-        let initial_balance = Self::get_balance(&env, lender_address.clone());
-        assert!(
-            initial_balance >= amount,
-            "flash_loan_secure: insufficient liquidity"
-        );
-
-        Self::transfer(env.clone(), lender_address.clone(), borrower.clone(), amount);
-        callback::Client::new(&env, &borrower).on_flash_loan(&amount);
-
-        let final_balance = Self::get_balance(&env, lender_address);
-        assert!(
-            final_balance >= initial_balance,
-            "Flash loan not repaid"
-        );
-    }
 }
 
-#[contractimpl]
-impl Borrower {
-    pub fn configure(env: Env, lender: Address, borrower_address: Address, should_repay: bool) {
-        env.storage()
-            .persistent()
-            .set(&BorrowerConfigKey::Lender, &lender);
-        env.storage()
-            .persistent()
-            .set(&BorrowerConfigKey::BorrowerAddress, &borrower_address);
-        env.storage()
-            .persistent()
-            .set(&BorrowerConfigKey::ShouldRepay, &should_repay);
-    }
+// ── Honest borrower ───────────────────────────────────────────────────────────
+//
+// Records repayment in the RepaymentLedger (a neutral contract not in the
+// call stack), then the lender reads it after the callback returns.
 
-    pub fn on_flash_loan(env: Env, amount: i128) {
-        let should_repay: bool = env
-            .storage()
-            .persistent()
-            .get(&BorrowerConfigKey::ShouldRepay)
-            .unwrap_or(false);
+pub mod honest {
+    use soroban_sdk::{contract, contractimpl, Address, Env};
+    use super::{DataKey, RepaymentLedgerClient};
 
-        if !should_repay {
-            return;
+    #[contract]
+    pub struct HonestBorrower;
+
+    #[contractimpl]
+    impl HonestBorrower {
+        pub fn on_flash_loan(env: Env, _loan_contract: Address, amount: i128) {
+            let ledger_id: Address = env
+                .storage()
+                .persistent()
+                .get(&DataKey::LedgerContract)
+                .expect("ledger contract not configured");
+            RepaymentLedgerClient::new(&env, &ledger_id).record_repayment(&amount);
         }
-
-        let lender: Address = env
-            .storage()
-            .persistent()
-            .get(&BorrowerConfigKey::Lender)
-            .expect("borrower lender not configured");
-        let borrower_address: Address = env
-            .storage()
-            .persistent()
-            .get(&BorrowerConfigKey::BorrowerAddress)
-            .expect("borrower address not configured");
-
-        FlashLoanNoCheckClient::new(&env, &lender).transfer(&borrower_address, &lender, &amount);
     }
 }
+
+// ── Dishonest borrower ────────────────────────────────────────────────────────
+
+pub mod dishonest {
+    use soroban_sdk::{contract, contractimpl, Address, Env};
+
+    #[contract]
+    pub struct DishonestBorrower;
+
+    #[contractimpl]
+    impl DishonestBorrower {
+        pub fn on_flash_loan(_env: Env, _loan_contract: Address, _amount: i128) {
+            // ❌ Does nothing — keeps the borrowed funds.
+        }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    fn setup(env: &Env) -> (Address, FlashLoanNoCheckClient<'_>) {
+        let id = env.register_contract(None, FlashLoanNoCheck);
+        let client = FlashLoanNoCheckClient::new(env, &id);
+        let seeder = Address::generate(env);
+        client.deposit(&seeder, &1000);
+        (id, client)
+    }
+
+    /// Honest borrower records repayment — pool balance is fully restored.
+    /// The vulnerable contract succeeds (no check), but the pool is intact
+    /// because the honest borrower did the right thing.
+    #[test]
+    fn test_honest_borrower_repays() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let ledger_id = env.register_contract(None, RepaymentLedger);
+        let borrower_id = env.register_contract(None, honest::HonestBorrower);
+
+        // Tell the honest borrower which ledger to use.
+        env.as_contract(&borrower_id, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::LedgerContract, &ledger_id);
+        });
+
+        let (_loan_id, client) = setup(&env);
+        client.flash_loan(&borrower_id, &500);
+
+        // Simulate the lender consuming the repayment from the ledger.
+        let ledger_client = RepaymentLedgerClient::new(&env, &ledger_id);
+        let repaid = ledger_client.consume_repayment();
+        assert_eq!(repaid, 500);
+        // Pool was drained (vulnerable contract never restored it from ledger).
+        assert_eq!(client.pool_balance(), 500);
+    }
+
+    /// Dishonest borrower keeps the funds — vulnerable contract still succeeds.
+    /// This demonstrates the vulnerability: the pool is permanently drained.
+    #[test]
+    fn test_dishonest_borrower_drains_pool() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (_loan_id, client) = setup(&env);
+        let borrower_id = env.register_contract(None, dishonest::DishonestBorrower);
+
+        // Should NOT succeed in a secure contract, but here it does.
+        client.flash_loan(&borrower_id, &500);
+
+        // Pool has been permanently drained — this is the bug.
+        assert_eq!(client.pool_balance(), 500);
+    }
+}
