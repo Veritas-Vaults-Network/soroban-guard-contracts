@@ -13,6 +13,7 @@ members = [
     "vulnerable/unprotected_admin",
     "vulnerable/unprotected_emergency_withdraw",
     "vulnerable/unsafe_storage",
+    "vulnerable/unbounded_storage",
     "vulnerable/zero_deposit",
     "vulnerable/reentrancy",
     "vulnerable/dust_griefing",
