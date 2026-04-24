@@ -20,13 +20,8 @@ pub struct TokenContract;
 
 #[contractimpl]
 impl TokenContract {
+    /// Mint `amount` tokens to `to`. No auth check — used for test setup.
     pub fn mint(env: Env, to: Address, amount: i128) {
-        let key = DataKey::Balance(to);
-        let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-        env.storage().persistent().set(&key, &(current + amount));
-    }
-
-    /// VULNERABLE: subtracts `amount` from `from_balance` with raw `-`.
     /// If `amount > from_balance` the i128 wraps to a large positive value.
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         from.require_auth();
@@ -49,6 +44,7 @@ impl TokenContract {
             .publish((symbol_short!("transfer"),), (from, to, amount));
     }
 
+    /// Returns the current balance of `account`, defaulting to `0`.
     pub fn balance(env: Env, account: Address) -> i128 {
         env.storage()
             .persistent()

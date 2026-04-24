@@ -29,6 +29,7 @@ impl KeyCollisionContract {
             .set(&symbol_short!("admin"), &admin);
     }
 
+    /// Returns the stored admin address, or `None` if not yet set.
     pub fn get_admin(env: Env) -> Option<Address> {
         env.storage()
             .persistent()
@@ -44,6 +45,7 @@ impl KeyCollisionContract {
         env.storage().persistent().set(&tag, &amount);
     }
 
+    /// Returns the balance stored under `tag`, or `None` if not set.
     pub fn get_balance(env: Env, tag: Symbol) -> Option<u64> {
         env.storage().persistent().get(&tag)
     }

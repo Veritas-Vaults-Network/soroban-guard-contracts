@@ -43,8 +43,8 @@ impl VaultContract {
             .set(&DataKey::Treasury, &initial_balance);
     }
 
-    /// Only the admin may withdraw — but if the admin was overwritten, the
-    /// attacker controls this gate.
+    /// Only the admin may withdraw — but if the admin was overwritten via re-init,
+    /// the attacker controls this gate.
     pub fn withdraw(env: Env, amount: i128) {
         let admin: Address = env
             .storage()
@@ -64,6 +64,7 @@ impl VaultContract {
             .set(&DataKey::Treasury, &new_balance);
     }
 
+    /// Returns the stored admin address.
     pub fn get_admin(env: Env) -> Address {
         env.storage()
             .persistent()
@@ -71,6 +72,7 @@ impl VaultContract {
             .expect("not initialized")
     }
 
+    /// Returns the current treasury balance.
     pub fn get_balance(env: Env) -> i128 {
         env.storage()
             .persistent()

@@ -39,6 +39,11 @@ pub struct VulnerableToken;
 
 #[contractimpl]
 impl VulnerableToken {
+    /// Mint `amount` tokens to `to`.
+    ///
+    /// # Vulnerability
+    /// No `extend_ttl` after the write. The balance entry will expire after
+    /// the network's minimum persistent TTL window if never touched again.
     pub fn mint(env: Env, to: Address, amount: i128) {
         let current = get_balance(&env, &to);
         let new_balance = current.checked_add(amount).expect("mint: balance overflow");
@@ -46,11 +51,21 @@ impl VulnerableToken {
         set_balance(&env, &to, new_balance);
     }
 
+    /// Returns the balance of `account`, defaulting to `0` if the entry has expired.
+    ///
+    /// # Vulnerability
+    /// No `extend_ttl` on read. Accessing an expired entry returns `0`, making
+    /// funds appear lost even though they were legitimately deposited.
     pub fn balance(env: Env, account: Address) -> i128 {
         // ❌ No persistent().extend_ttl(...) after the read.
         get_balance(&env, &account)
     }
 
+    /// Transfer `amount` from `from` to `to`.
+    ///
+    /// # Vulnerability
+    /// Neither the sender nor recipient balance entry has its TTL extended after
+    /// the write. Both entries will eventually expire, making balances inaccessible.
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         from.require_auth();
 

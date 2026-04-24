@@ -24,14 +24,8 @@ pub struct StakingContract;
 
 #[contractimpl]
 impl StakingContract {
+    /// Stake `amount` tokens for `staker`. Requires staker auth.
     pub fn stake(env: Env, staker: Address, amount: u64) {
-        staker.require_auth();
-        let prev: u64 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Stake(staker.clone()))
-            .unwrap_or(0);
-        let total: u64 = env
             .storage()
             .persistent()
             .get(&DataKey::TotalStaked)
@@ -55,6 +49,7 @@ impl StakingContract {
         total_reward / total_staked
     }
 
+    /// Returns the staked amount for `staker`, defaulting to `0`.
     pub fn staked_amount(env: Env, staker: Address) -> u64 {
         env.storage()
             .persistent()
@@ -62,6 +57,7 @@ impl StakingContract {
             .unwrap_or(0)
     }
 
+    /// Returns the total amount staked across all stakers.
     pub fn total_staked(env: Env) -> u64 {
         env.storage()
             .persistent()

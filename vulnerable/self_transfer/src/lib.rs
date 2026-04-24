@@ -34,18 +34,24 @@ pub struct VulnerableToken;
 
 #[contractimpl]
 impl VulnerableToken {
+    /// Mint `amount` tokens to `to`. No auth check — used for test setup.
     pub fn mint(env: Env, to: Address, amount: i128) {
         let current = get_balance(&env, &to);
         set_balance(&env, &to, current.checked_add(amount).unwrap());
     }
 
+    /// Returns the current balance of `account`, defaulting to `0`.
     pub fn balance(env: Env, account: Address) -> i128 {
         get_balance(&env, &account)
     }
 
+    /// VULNERABLE: transfers `amount` from `from` to `to` without a self-transfer guard.
+    ///
+    /// # Vulnerability
+    /// When `from == to`, both reads resolve to the same storage slot. The second
+    /// `set_balance` overwrites the first, inflating the balance by `amount` instead
+    /// of leaving it unchanged.
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-        from.require_auth();
-        // ❌ No from != to check — self-transfer corrupts balance
         let from_balance = get_balance(&env, &from);
         let to_balance = get_balance(&env, &to); // same slot as from_balance when from == to
         set_balance(&env, &from, from_balance.checked_sub(amount).unwrap());

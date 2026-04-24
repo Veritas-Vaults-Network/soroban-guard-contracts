@@ -23,6 +23,11 @@ pub struct ZeroAdminContract;
 #[contractimpl]
 impl ZeroAdminContract {
     /// VULNERABLE: accepts any address, including the zero/default address.
+    ///
+    /// # Vulnerability
+    /// No validation that `admin` is a real, signable address. Passing the
+    /// Stellar zero address permanently bricks all admin-gated functions because
+    /// no real key can satisfy `require_auth` for it.
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().persistent().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -32,16 +37,22 @@ impl ZeroAdminContract {
     }
 
     /// Admin-gated function — permanently inaccessible if admin is zero.
+    ///
+    /// # Vulnerability
+    /// If `initialize` was called with the zero address, `require_auth` can
+    /// never be satisfied and this function is bricked forever.
     pub fn set_value(env: Env, value: i128) {
         let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Value, &value);
     }
 
+    /// Returns the stored value, defaulting to `0` if not yet set.
     pub fn get_value(env: Env) -> i128 {
         env.storage().persistent().get(&DataKey::Value).unwrap_or(0)
     }
 
+    /// Returns the stored admin address.
     pub fn get_admin(env: Env) -> Address {
         env.storage().persistent().get(&DataKey::Admin).unwrap()
     }

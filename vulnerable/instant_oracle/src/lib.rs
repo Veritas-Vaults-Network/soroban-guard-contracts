@@ -31,6 +31,7 @@ pub struct InstantOracle;
 
 #[contractimpl]
 impl InstantOracle {
+    /// Initialize the oracle with `admin` as the only authorized price setter.
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().persistent().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -39,6 +40,11 @@ impl InstantOracle {
     }
 
     /// VULNERABLE: price is immediately readable in the same ledger.
+    ///
+    /// # Vulnerability
+    /// No minimum delay between write and read. An attacker can call `set_price`
+    /// and `get_price` in the same transaction (flash-loan style) to manipulate
+    /// any contract that consumes this oracle.
     pub fn set_price(env: Env, price: i128) {
         let admin = get_admin(&env);
         admin.require_auth();
@@ -55,6 +61,7 @@ impl InstantOracle {
             .unwrap_or(0)
     }
 
+    /// Returns the ledger sequence at which the price was last updated.
     pub fn updated_at(env: Env) -> u32 {
         env.storage()
             .persistent()

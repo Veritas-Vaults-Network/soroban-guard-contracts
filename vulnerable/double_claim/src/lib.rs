@@ -53,12 +53,14 @@ pub struct DoubleClaim;
 
 #[contractimpl]
 impl DoubleClaim {
+    /// Set the per-token reward rate. Must be called once before staking.
     pub fn initialize(env: Env, reward_rate: u64) {
         env.storage()
             .persistent()
             .set(&DataKey::RewardRate, &reward_rate);
     }
 
+    /// Stake `amount` tokens for `staker` and record the current ledger sequence.
     pub fn stake(env: Env, staker: Address, amount: u64) {
         staker.require_auth();
         env.storage()

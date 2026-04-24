@@ -26,6 +26,7 @@ pub struct VulnerableEscrow;
 
 #[contractimpl]
 impl VulnerableEscrow {
+    /// Store `admin` as the contract owner. Panics if already initialized.
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().persistent().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -33,6 +34,7 @@ impl VulnerableEscrow {
         env.storage().persistent().set(&DataKey::Admin, &admin);
     }
 
+    /// Deposit `amount` into escrow for `user`. Requires user auth.
     pub fn deposit(env: Env, user: Address, amount: i128) {
         user.require_auth();
         let key = DataKey::Balance(user.clone());
@@ -40,6 +42,7 @@ impl VulnerableEscrow {
         env.storage().persistent().set(&key, &(current + amount));
     }
 
+    /// Withdraw `amount` from escrow for `user`. Requires user auth.
     pub fn withdraw(env: Env, user: Address, amount: i128) {
         user.require_auth();
         let key = DataKey::Balance(user.clone());
@@ -76,6 +79,7 @@ impl VulnerableEscrow {
             .set(&recipient_key, &(recipient_bal + amount));
     }
 
+    /// Returns the current escrow balance of `user`, defaulting to `0`.
     pub fn get_balance(env: Env, user: Address) -> i128 {
         env.storage()
             .persistent()

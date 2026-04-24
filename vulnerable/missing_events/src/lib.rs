@@ -20,7 +20,10 @@ pub struct TokenContract;
 #[contractimpl]
 impl TokenContract {
     /// Mint tokens to an address (admin-only in a real contract — unprotected here).
-    /// VULNERABLE: No event emitted for off-chain tracking.
+    ///
+    /// # Vulnerability
+    /// No `env.events().publish()` call. Off-chain indexers cannot observe this
+    /// supply change, leading to inconsistent views of total supply and balances.
     pub fn mint(env: Env, to: Address, amount: i128) {
         // ❌ No env.events().publish() — off-chain indexers are blind to this
         let key = DataKey::Balance(to);
@@ -29,7 +32,10 @@ impl TokenContract {
     }
 
     /// Burn tokens from an address.
-    /// VULNERABLE: No event emitted for off-chain tracking.
+    ///
+    /// # Vulnerability
+    /// No `env.events().publish()` call. Off-chain indexers cannot observe this
+    /// supply reduction, making the event stream an unreliable source of truth.
     pub fn burn(env: Env, from: Address, amount: i128) {
         // ❌ No env.events().publish() — off-chain indexers are blind to this
         let key = DataKey::Balance(from);
@@ -37,8 +43,10 @@ impl TokenContract {
         env.storage().persistent().set(&key, &(current - amount));
     }
 
-    /// Transfer tokens between addresses.
-    /// This function correctly emits events for comparison.
+    /// Transfer tokens between addresses, correctly emitting a `transfer` event.
+    ///
+    /// Included for contrast — this function shows the correct event pattern
+    /// that `mint` and `burn` are missing.
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         let from_key = DataKey::Balance(from.clone());
         let to_key = DataKey::Balance(to.clone());
@@ -57,6 +65,7 @@ impl TokenContract {
             .publish((symbol_short!("transfer"),), (from, to, amount));
     }
 
+    /// Returns the current balance of `account`, defaulting to `0`.
     pub fn balance(env: Env, account: Address) -> i128 {
         env.storage()
             .persistent()

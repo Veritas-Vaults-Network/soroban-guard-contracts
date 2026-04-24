@@ -23,12 +23,14 @@ pub struct StakingContract;
 
 #[contractimpl]
 impl StakingContract {
+    /// Store the per-token reward rate (scaled by 1_000_000). Must be called once.
     pub fn initialize(env: Env, reward_rate: u64) {
         env.storage()
             .persistent()
             .set(&DataKey::RewardRate, &reward_rate);
     }
 
+    /// Record a stake of `amount` for `staker` at the current ledger sequence.
     pub fn stake(env: Env, staker: Address, amount: u64) {
         staker.require_auth();
         env.storage()
@@ -77,6 +79,7 @@ impl StakingContract {
         reward
     }
 
+    /// Returns the raw staked amount for `staker`, defaulting to `0`.
     pub fn staked_amount(env: Env, staker: Address) -> u64 {
         env.storage()
             .persistent()

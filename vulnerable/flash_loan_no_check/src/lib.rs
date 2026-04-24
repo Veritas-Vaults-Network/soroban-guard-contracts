@@ -130,6 +130,7 @@ impl FlashLoanNoCheck {
         // ❌ Missing: assert pool balance >= pool_before
     }
 
+    /// Returns the current pool balance.
     pub fn pool_balance(env: Env) -> i128 {
         env.storage()
             .persistent()

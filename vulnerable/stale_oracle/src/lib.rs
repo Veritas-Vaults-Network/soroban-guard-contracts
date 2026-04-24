@@ -30,6 +30,7 @@ pub struct VulnerableLending;
 
 #[contractimpl]
 impl VulnerableLending {
+    /// Initialize the lending contract with the address of the price oracle.
     pub fn init(env: Env, oracle_id: Address) {
         if env.storage().persistent().has(&DataKey::OracleId) {
             panic!("already initialized");
@@ -37,6 +38,7 @@ impl VulnerableLending {
         env.storage().persistent().set(&DataKey::OracleId, &oracle_id);
     }
 
+    /// Deposit `amount` of collateral for `user`.
     pub fn deposit_collateral(env: Env, user: Address, amount: i128) {
         user.require_auth();
         let key = DataKey::Collateral(user);
@@ -46,7 +48,12 @@ impl VulnerableLending {
             .set(&key, &(current + amount));
     }
 
-    /// ❌ No staleness check — price could be arbitrarily old.
+    /// Returns `collateral * oracle_price` for `user`.
+    ///
+    /// # Vulnerability
+    /// No staleness check on the oracle's `last_updated` timestamp. An attacker
+    /// can exploit an arbitrarily old price to over- or under-value collateral,
+    /// enabling undercollateralized borrows or unfair liquidations.
     pub fn get_collateral_value(env: Env, user: Address) -> i128 {
         let oracle_id: Address = env
             .storage()

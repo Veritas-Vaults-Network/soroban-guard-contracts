@@ -95,6 +95,7 @@ impl VulnerableAmm {
         amount_out
     }
 
+    /// Returns the current reserve of token A.
     pub fn reserve_a(env: Env) -> i128 {
         env.storage()
             .persistent()
@@ -102,6 +103,7 @@ impl VulnerableAmm {
             .unwrap_or(0)
     }
 
+    /// Returns the current reserve of token B.
     pub fn reserve_b(env: Env) -> i128 {
         env.storage()
             .persistent()

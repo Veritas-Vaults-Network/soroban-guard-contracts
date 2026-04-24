@@ -66,11 +66,13 @@ pub struct VulnerableToken;
 
 #[contractimpl]
 impl VulnerableToken {
+    /// Mint `amount` tokens to `to`. No auth check — used for test setup.
     pub fn mint(env: Env, to: Address, amount: i128) {
         let current = get_balance(&env, &to);
         set_balance(&env, &to, current + amount);
     }
 
+    /// Approve `spender` to transfer up to `amount` tokens from `owner`.
     pub fn approve(env: Env, owner: Address, spender: Address, amount: i128) {
         owner.require_auth();
         set_allowance(&env, &owner, &spender, amount);
@@ -85,10 +87,12 @@ impl VulnerableToken {
         do_transfer(&env, &from, &to, amount);
     }
 
+    /// Returns the current balance of `account`, defaulting to `0`.
     pub fn balance(env: Env, account: Address) -> i128 {
         get_balance(&env, &account)
     }
 
+    /// Returns the current allowance granted by `owner` to `spender`.
     pub fn allowance(env: Env, owner: Address, spender: Address) -> i128 {
         get_allowance(&env, &owner, &spender)
     }

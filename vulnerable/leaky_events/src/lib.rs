@@ -45,15 +45,18 @@ pub struct VulnerableToken;
 
 #[contractimpl]
 impl VulnerableToken {
+    /// Mint `amount` tokens to `to`. No auth check — used for test setup.
     pub fn mint(env: Env, to: Address, amount: i128) {
         let current = get_balance(&env, &to);
         set_balance(&env, &to, current + amount);
     }
 
+    /// VULNERABLE: transfers `amount` from `from` to `to`, leaking post-transfer balances in the event.
+    ///
+    /// # Vulnerability
+    /// The event payload includes `new_from_balance` and `new_to_balance`, exposing
+    /// exact financial state of both parties to any off-chain observer.
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-        from.require_auth();
-
-        let from_bal = get_balance(&env, &from);
         assert!(from_bal >= amount, "insufficient balance");
 
         let new_from_balance = from_bal - amount;
@@ -71,6 +74,7 @@ impl VulnerableToken {
         );
     }
 
+    /// Returns the current balance of `account`, defaulting to `0`.
     pub fn balance(env: Env, account: Address) -> i128 {
         get_balance(&env, &account)
     }

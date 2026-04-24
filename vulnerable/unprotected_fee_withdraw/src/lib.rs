@@ -21,6 +21,7 @@ pub struct UnprotectedFeeWithdraw;
 
 #[contractimpl]
 impl UnprotectedFeeWithdraw {
+    /// Store `admin` and initialize the fee accumulator to zero. Panics if already initialized.
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().persistent().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -29,7 +30,7 @@ impl UnprotectedFeeWithdraw {
         env.storage().persistent().set(&DataKey::Fees, &0i128);
     }
 
-    /// Simulate a swap that accumulates fees.
+    /// Simulate a swap that accumulates `fee_rate` basis points of `amount_in` as fees.
     pub fn swap(env: Env, amount_in: i128, fee_rate: i128) {
         // In a real DEX, this would validate the swap and transfer tokens.
         // For this example, we just accumulate fees.
@@ -55,9 +56,10 @@ impl UnprotectedFeeWithdraw {
         // In a real contract, this would transfer tokens to the recipient.
         // For this example, we just emit an event to demonstrate the vulnerability.
         env.events()
-            .publish((symbol_short!("withdraw_fees"),), (recipient.clone(), fees));
+            .publish((symbol_short!("fee_out"),), (recipient.clone(), fees));
     }
 
+    /// Returns the total accumulated fees not yet withdrawn.
     pub fn get_fees(env: Env) -> i128 {
         env.storage()
             .persistent()
@@ -65,72 +67,45 @@ impl UnprotectedFeeWithdraw {
             .unwrap_or(0)
     }
 
-    pub fn get_admin(env: Env) -> Address {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .expect("not initialized")
+    /// Returns the stored admin address.
+    pub fn get_admin(env: Env) -> Address {<'static>) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let id = env.register_contract(None, UnprotectedFeeWithdraw);
+        let client = UnprotectedFeeWithdrawClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+        (env, admin, client)
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use soroban_sdk::Env;
 
     #[test]
     fn test_admin_withdraws_fees_normally() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let admin = Address::random(&env);
-        let contract = UnprotectedFeeWithdraw;
-
-        contract.initialize(env.clone(), admin.clone());
-        contract.swap(env.clone(), 1000, 25); // 0.25% fee = 2.5 (truncated to 2)
-        contract.swap(env.clone(), 2000, 25); // 0.25% fee = 5
-
-        assert_eq!(contract.get_fees(env.clone()), 7);
-
-        contract.withdraw_fees(env.clone(), admin.clone());
-        assert_eq!(contract.get_fees(env.clone()), 0);
+        let (env, admin, client) = setup();
+        client.swap(&1000, &25);
+        client.swap(&2000, &25);
+        assert_eq!(client.get_fees(), 7);
+        client.withdraw_fees(&admin);
+        assert_eq!(client.get_fees(), 0);
     }
 
     #[test]
     fn test_attacker_withdraws_fees_without_auth() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let admin = Address::random(&env);
-        let attacker = Address::random(&env);
-        let contract = UnprotectedFeeWithdraw;
-
-        contract.initialize(env.clone(), admin.clone());
-        contract.swap(env.clone(), 1000, 25); // 0.25% fee = 2.5 (truncated to 2)
-        contract.swap(env.clone(), 2000, 25); // 0.25% fee = 5
-
-        assert_eq!(contract.get_fees(env.clone()), 7);
-
-        // ❌ VULNERABILITY: Attacker can withdraw fees without being the admin.
-        // This should panic in a secure implementation, but succeeds here.
-        contract.withdraw_fees(env.clone(), attacker.clone());
-        assert_eq!(contract.get_fees(env.clone()), 0);
+        let (env, _admin, client) = setup();
+        let attacker = Address::generate(&env);
+        client.swap(&1000, &25);
+        client.swap(&2000, &25);
+        assert_eq!(client.get_fees(), 7);
+        // ❌ VULNERABILITY: no admin check — attacker drains fees
+        client.withdraw_fees(&attacker);
+        assert_eq!(client.get_fees(), 0);
     }
 
     #[test]
     fn test_fee_balance_zeroed_after_withdrawal() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let admin = Address::random(&env);
-        let contract = UnprotectedFeeWithdraw;
-
-        contract.initialize(env.clone(), admin.clone());
-        contract.swap(env.clone(), 5000, 50); // 0.5% fee = 25
-
-        assert_eq!(contract.get_fees(env.clone()), 25);
-
-        contract.withdraw_fees(env.clone(), admin.clone());
-        assert_eq!(contract.get_fees(env.clone()), 0);
+        let (env, admin, client) = setup();
+        client.swap(&5000, &50);
+        assert_eq!(client.get_fees(), 25);
+        client.withdraw_fees(&admin);
+        assert_eq!(client.get_fees(), 0);
     }
 }

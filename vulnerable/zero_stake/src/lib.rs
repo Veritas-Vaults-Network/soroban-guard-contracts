@@ -66,6 +66,7 @@ impl VulnerableStaking {
         info.amount * elapsed
     }
 
+    /// Returns `true` if `staker` has an active stake entry, `false` otherwise.
     pub fn is_staker(env: Env, staker: Address) -> bool {
         env.storage()
             .persistent()

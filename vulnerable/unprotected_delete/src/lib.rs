@@ -31,6 +31,7 @@ impl DataRegistry {
             .set(&DataKey::Entry(account), &value);
     }
 
+    /// Returns the entry stored for `account`, or `None` if not set.
     pub fn get_entry(env: Env, account: Address) -> Option<String> {
         env.storage().persistent().get(&DataKey::Entry(account))
     }

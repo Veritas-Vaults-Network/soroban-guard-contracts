@@ -27,6 +27,7 @@ pub struct StringAdminContract;
 
 #[contractimpl]
 impl StringAdminContract {
+    /// Store `admin` string as the access credential. Panics if already initialized.
     pub fn initialize(env: Env, admin: String) {
         if env.storage().persistent().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -49,6 +50,7 @@ impl StringAdminContract {
         env.storage().persistent().set(&DataKey::Config, &new_value);
     }
 
+    /// Returns the stored config value, defaulting to `0`.
     pub fn get_config(env: Env) -> u32 {
         env.storage()
             .persistent()

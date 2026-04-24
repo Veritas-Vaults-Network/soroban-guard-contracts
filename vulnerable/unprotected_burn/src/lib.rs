@@ -47,6 +47,7 @@ impl UnprotectedBurnToken {
             .publish((symbol_short!("burn"),), (account, amount));
     }
 
+    /// Returns the current balance of `account`, defaulting to `0`.
     pub fn balance(env: Env, account: Address) -> i128 {
         env.storage()
             .persistent()

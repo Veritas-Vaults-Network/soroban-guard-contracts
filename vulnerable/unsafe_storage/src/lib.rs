@@ -40,11 +40,16 @@ impl ProfileRegistry {
             .set(&DataKey::Profile(account), &profile);
     }
 
+    /// Returns the stored profile for `account`, or `None` if not set.
     pub fn get_profile(env: Env, account: Address) -> Option<Profile> {
         env.storage().persistent().get(&DataKey::Profile(account))
     }
 
-    /// VULNERABLE: same pattern — anyone can wipe any account's profile.
+    /// VULNERABLE: same pattern as `set_profile` — anyone can wipe any account's profile.
+    ///
+    /// # Vulnerability
+    /// No `account.require_auth()`. Any caller can pass any address and delete
+    /// that account's data. Impact: data integrity violation.
     pub fn delete_profile(env: Env, account: Address) {
         // ❌ Missing: account.require_auth();
         env.storage()

@@ -46,6 +46,7 @@ impl DustGriefingVault {
         set_balance(&env, &user, bal + amount);
     }
 
+    /// Returns the current balance of `user`, defaulting to `0`.
     pub fn balance(env: Env, user: Address) -> i128 {
         get_balance(&env, &user)
     }
