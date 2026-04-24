@@ -4,6 +4,7 @@ members = [
     "vulnerable/admin_rugpull",
     "vulnerable/scanner_impersonation",
     "vulnerable/missing_auth",
+    "vulnerable/unprotected_mint",
     "vulnerable/zero_admin",
     "vulnerable/missing_events",
     "vulnerable/missing_ttl",
