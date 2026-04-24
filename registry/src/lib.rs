@@ -130,10 +130,15 @@ impl ScanRegistry {
         findings_hash: String,
         severity_counts: Map<String, u32>,
     ) {
-        // 1. The scanner must have signed this transaction.
+        // 1. findings_hash must not be empty.
+        if findings_hash.is_empty() {
+            panic!("findings_hash cannot be empty");
+        }
+
+        // 2. The scanner must have signed this transaction.
         scanner.require_auth();
 
-        // 2. The scanner must be in the approved list.
+        // 3. The scanner must be in the approved list.
         let approved: bool = env
             .storage()
             .persistent()
@@ -548,6 +553,40 @@ mod tests {
 
         submit_n_scans(&client, &scanner, &target, 4, &env);
         assert_eq!(client.get_history_len(&target), 4);
+    }
+
+    // ── Issue #150: empty findings_hash tests ────────────────────────────────
+
+    /// After the fix, submitting an empty findings_hash must panic.
+    #[test]
+    #[should_panic(expected = "findings_hash cannot be empty")]
+    fn test_empty_findings_hash_rejected() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
+
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, ""), &counts);
+    }
+
+    /// A valid 64-character hex string is accepted without issue.
+    #[test]
+    fn test_valid_findings_hash_accepted() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
+        let hash = String::from_str(
+            &env,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        );
+
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &target, &hash, &counts);
+
+        let result = client.get_scan(&target).unwrap();
+        assert_eq!(result.findings_hash, hash);
     }
 
     #[test]
