@@ -1,7 +1,8 @@
 //! On-chain Scan Result Registry
 //!
 //! Stores scan findings submitted by verified scanners, keyed by the scanned
-//! contract address. Supports full history per contract.
+//! contract address. Supports full history per contract and an enumerable
+//! index of all scanned contract addresses.
 //!
 //! Auth model:
 //! - Only the admin can add/remove scanners.
@@ -35,6 +36,8 @@ pub enum DataKey {
     LatestScan(Address),
     /// Full ordered history of scan results for a contract address
     ScanHistory(Address),
+    /// Ordered list of every contract address that has been scanned at least once
+    ScannedContracts,
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -46,10 +49,6 @@ pub struct ScanRegistry;
 impl ScanRegistry {
     // ── Initialisation ───────────────────────────────────────────────────────
 
-    /// Initialize the registry with an admin address.
-    ///
-    /// # Panics
-    /// Panics if the registry has already been initialized.
     pub fn initialize(env: Env, admin: Address) {
         if env.storage().persistent().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -59,13 +58,6 @@ impl ScanRegistry {
 
     // ── Scanner management (admin only) ──────────────────────────────────────
 
-    /// Add a scanner to the approved list.
-    ///
-    /// # Arguments
-    /// * `scanner` - The address to approve for submitting scans.
-    ///
-    /// # Panics
-    /// Panics if the caller is not the admin.
     pub fn add_scanner(env: Env, scanner: Address) {
         Self::require_admin(&env);
         env.storage()
@@ -73,13 +65,6 @@ impl ScanRegistry {
             .set(&DataKey::Scanner(scanner), &true);
     }
 
-    /// Remove a scanner from the approved list.
-    ///
-    /// # Arguments
-    /// * `scanner` - The address to remove from the approved list.
-    ///
-    /// # Panics
-    /// Panics if the caller is not the admin.
     pub fn remove_scanner(env: Env, scanner: Address) {
         Self::require_admin(&env);
         env.storage()
@@ -87,13 +72,6 @@ impl ScanRegistry {
             .set(&DataKey::Scanner(scanner), &false);
     }
 
-    /// Check whether an address is an approved scanner.
-    ///
-    /// # Arguments
-    /// * `scanner` - The address to check.
-    ///
-    /// # Returns
-    /// `true` if the scanner is approved, `false` otherwise.
     pub fn is_scanner(env: Env, scanner: Address) -> bool {
         env.storage()
             .persistent()
@@ -103,11 +81,6 @@ impl ScanRegistry {
 
     // ── Scan submission ──────────────────────────────────────────────────────
 
-    /// Submit a scan result for `contract_address`.
-    ///
-    /// `scanner` must be a verified scanner address and must have signed this
-    /// transaction. `findings_hash` is a hex-encoded SHA-256 of the full
-    /// findings JSON. `severity_counts` maps severity labels to counts.
     pub fn submit_scan(
         env: Env,
         scanner: Address,
@@ -115,10 +88,8 @@ impl ScanRegistry {
         findings_hash: String,
         severity_counts: Map<String, u32>,
     ) {
-        // 1. The scanner must have signed this transaction.
         scanner.require_auth();
 
-        // 2. The scanner must be in the approved list.
         let approved: bool = env
             .storage()
             .persistent()
@@ -135,13 +106,11 @@ impl ScanRegistry {
             severity_counts,
         };
 
-        // Overwrite latest result.
         env.storage()
             .persistent()
             .set(&DataKey::LatestScan(contract_address.clone()), &result);
 
-        // Append to history.
-        let history_key = DataKey::ScanHistory(contract_address);
+        let history_key = DataKey::ScanHistory(contract_address.clone());
         let mut history: Vec<ScanResult> = env
             .storage()
             .persistent()
@@ -149,31 +118,29 @@ impl ScanRegistry {
             .unwrap_or(Vec::new(&env));
         history.push_back(result);
         env.storage().persistent().set(&history_key, &history);
+
+        // Append to the scanned-contracts index if not already present.
+        let mut index: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ScannedContracts)
+            .unwrap_or(Vec::new(&env));
+        if !index.contains(&contract_address) {
+            index.push_back(contract_address);
+            env.storage()
+                .persistent()
+                .set(&DataKey::ScannedContracts, &index);
+        }
     }
 
     // ── Queries ──────────────────────────────────────────────────────────────
 
-    /// Retrieve the latest scan result for a contract address.
-    ///
-    /// # Arguments
-    /// * `contract_address` - The contract address to look up.
-    ///
-    /// # Returns
-    /// The most recent `ScanResult`, or `None` if no scan exists.
     pub fn get_scan(env: Env, contract_address: Address) -> Option<ScanResult> {
         env.storage()
             .persistent()
             .get(&DataKey::LatestScan(contract_address))
     }
 
-    /// Retrieve the full scan history for a contract address.
-    ///
-    /// # Arguments
-    /// * `contract_address` - The contract address to look up.
-    ///
-    /// # Returns
-    /// A vector of all `ScanResult`s submitted for this contract, ordered oldest
-    /// to newest.
     pub fn get_history(env: Env, contract_address: Address) -> Vec<ScanResult> {
         env.storage()
             .persistent()
@@ -181,13 +148,35 @@ impl ScanRegistry {
             .unwrap_or(Vec::new(&env))
     }
 
-    /// Return the admin address of the registry.
+    /// Return every contract address that has been scanned at least once.
+    pub fn get_all_scanned_contracts(env: Env) -> Vec<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ScannedContracts)
+            .unwrap_or(Vec::new(&env))
+    }
+
+    /// Return a page of scanned contract addresses.
     ///
-    /// # Returns
-    /// The admin `Address`.
-    ///
-    /// # Panics
-    /// Panics if the registry has not been initialized.
+    /// `page` is 0-indexed. Returns an empty vec when `page` is out of range.
+    pub fn get_scanned_contracts_page(env: Env, page: u32, page_size: u32) -> Vec<Address> {
+        let all: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ScannedContracts)
+            .unwrap_or(Vec::new(&env));
+
+        let start = (page * page_size) as usize;
+        let mut result = Vec::new(&env);
+        for i in start..(start + page_size as usize) {
+            match all.get(i as u32) {
+                Some(addr) => result.push_back(addr),
+                None => break,
+            }
+        }
+        result
+    }
+
     pub fn get_admin(env: Env) -> Address {
         env.storage()
             .persistent()
@@ -224,6 +213,10 @@ mod tests {
         (env, contract_id, admin, scanner)
     }
 
+    fn counts(env: &Env) -> Map<String, u32> {
+        map![env, (String::from_str(env, "low"), 1u32)]
+    }
+
     #[test]
     fn test_add_scanner_and_submit() {
         let (env, contract_id, _admin, scanner) = setup();
@@ -231,16 +224,11 @@ mod tests {
 
         let target = Address::generate(&env);
         let hash = String::from_str(&env, "abc123");
-        let counts: Map<String, u32> = map![
-            &env,
-            (String::from_str(&env, "critical"), 1u32),
-            (String::from_str(&env, "high"), 2u32)
-        ];
 
         client.add_scanner(&scanner);
         assert!(client.is_scanner(&scanner));
 
-        client.submit_scan(&scanner, &target, &hash, &counts);
+        client.submit_scan(&scanner, &target, &hash, &counts(&env));
 
         let result = client.get_scan(&target).unwrap();
         assert_eq!(result.scanner, scanner);
@@ -251,44 +239,25 @@ mod tests {
     fn test_get_history_accumulates() {
         let (env, contract_id, _admin, scanner) = setup();
         let client = ScanRegistryClient::new(&env, &contract_id);
-
         let target = Address::generate(&env);
-        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 1u32)];
 
         client.add_scanner(&scanner);
-
-        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash1"), &counts);
-        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash2"), &counts);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash1"), &counts(&env));
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash2"), &counts(&env));
 
         let history = client.get_history(&target);
         assert_eq!(history.len(), 2);
-        assert_eq!(
-            history.get(0).unwrap().findings_hash,
-            String::from_str(&env, "hash1")
-        );
-        assert_eq!(
-            history.get(1).unwrap().findings_hash,
-            String::from_str(&env, "hash2")
-        );
+        assert_eq!(history.get(0).unwrap().findings_hash, String::from_str(&env, "hash1"));
+        assert_eq!(history.get(1).unwrap().findings_hash, String::from_str(&env, "hash2"));
     }
 
-    /// Unregistered address cannot submit scans.
     #[test]
     #[should_panic]
     fn test_unverified_scanner_cannot_submit() {
         let (env, contract_id, _admin, scanner) = setup();
         let client = ScanRegistryClient::new(&env, &contract_id);
-
         let target = Address::generate(&env);
-        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
-
-        // scanner was never added — should panic.
-        client.submit_scan(
-            &scanner,
-            &target,
-            &String::from_str(&env, "badhash"),
-            &counts,
-        );
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "badhash"), &counts(&env));
     }
 
     #[test]
@@ -296,16 +265,74 @@ mod tests {
     fn test_remove_scanner_blocks_submission() {
         let (env, contract_id, _admin, scanner) = setup();
         let client = ScanRegistryClient::new(&env, &contract_id);
-
         let target = Address::generate(&env);
-        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
 
         client.add_scanner(&scanner);
         client.remove_scanner(&scanner);
-
         assert!(!client.is_scanner(&scanner));
 
-        // Attempting to submit after removal should panic.
-        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash"), &counts);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash"), &counts(&env));
+    }
+
+    // ── Scanned-contracts index tests ────────────────────────────────────────
+
+    #[test]
+    fn test_get_all_scanned_contracts_returns_all() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let t1 = Address::generate(&env);
+        let t2 = Address::generate(&env);
+        let t3 = Address::generate(&env);
+
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &t1, &String::from_str(&env, "h1"), &counts(&env));
+        client.submit_scan(&scanner, &t2, &String::from_str(&env, "h2"), &counts(&env));
+        client.submit_scan(&scanner, &t3, &String::from_str(&env, "h3"), &counts(&env));
+
+        let all = client.get_all_scanned_contracts();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn test_scanning_same_contract_twice_no_duplicate() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "h1"), &counts(&env));
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "h2"), &counts(&env));
+
+        let all = client.get_all_scanned_contracts();
+        assert_eq!(all.len(), 1);
+    }
+
+    #[test]
+    fn test_paginated_query_returns_correct_slice() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let targets: Vec<Address> = (0..5).map(|_| Address::generate(&env)).collect();
+
+        client.add_scanner(&scanner);
+        for t in &targets {
+            client.submit_scan(&scanner, t, &String::from_str(&env, "h"), &counts(&env));
+        }
+
+        // Page 0, size 2 → first 2
+        let page0 = client.get_scanned_contracts_page(&0, &2);
+        assert_eq!(page0.len(), 2);
+
+        // Page 1, size 2 → next 2
+        let page1 = client.get_scanned_contracts_page(&1, &2);
+        assert_eq!(page1.len(), 2);
+
+        // Page 2, size 2 → last 1
+        let page2 = client.get_scanned_contracts_page(&2, &2);
+        assert_eq!(page2.len(), 1);
+
+        // Pages don't overlap
+        assert_ne!(page0.get(0).unwrap(), page1.get(0).unwrap());
     }
 }
