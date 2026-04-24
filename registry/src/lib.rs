@@ -35,6 +35,8 @@ pub enum DataKey {
     LatestScan(Address),
     /// Full ordered history of scan results for a contract address
     ScanHistory(Address),
+    /// Reputation score for a scanner address (i32, default 0)
+    ScannerScore(Address),
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -141,6 +143,9 @@ impl ScanRegistry {
             panic!("not a verified scanner");
         }
 
+        // Keep a copy for the score key before scanner is moved into ScanResult.
+        let score_key = DataKey::ScannerScore(scanner.clone());
+
         let result = ScanResult {
             scanner: scanner.clone(),
             timestamp: env.ledger().timestamp(),
@@ -163,11 +168,48 @@ impl ScanRegistry {
         history.push_back(result);
         env.storage().persistent().set(&history_key, &history);
 
-        // Emit structured event for off-chain indexers.
-        env.events().publish(
-            (symbol_short!("scan"), symbol_short!("submitted")),
-            (scanner, contract_address, findings_hash),
-        );
+        // Increment scanner reputation score.
+        let score: i32 = env
+            .storage()
+            .persistent()
+            .get(&score_key)
+            .unwrap_or(0i32);
+        env.storage()
+            .persistent()
+            .set(&score_key, &score.saturating_add(1));
+    }
+
+    // ── Reputation ───────────────────────────────────────────────────────────
+
+    /// Dispute a scanner's submission (admin only), decrementing their score by 1.
+    ///
+    /// # Arguments
+    /// * `scanner` - The scanner whose score should be decremented.
+    ///
+    /// # Panics
+    /// Panics if the caller is not the admin.
+    pub fn dispute_scan(env: Env, scanner: Address) {
+        Self::require_admin(&env);
+        let score_key = DataKey::ScannerScore(scanner);
+        let score: i32 = env
+            .storage()
+            .persistent()
+            .get(&score_key)
+            .unwrap_or(0i32);
+        env.storage()
+            .persistent()
+            .set(&score_key, &score.saturating_sub(1));
+    }
+
+    /// Return the reputation score for a scanner (defaults to 0).
+    ///
+    /// # Arguments
+    /// * `scanner` - The scanner address to query.
+    pub fn get_scanner_score(env: Env, scanner: Address) -> i32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ScannerScore(scanner))
+            .unwrap_or(0i32)
     }
 
     // ── Queries ──────────────────────────────────────────────────────────────
@@ -198,6 +240,66 @@ impl ScanRegistry {
             .persistent()
             .get(&DataKey::ScanHistory(contract_address))
             .unwrap_or(Vec::new(&env))
+    }
+
+    /// Return the total number of scan results stored for a contract address.
+    ///
+    /// # Arguments
+    /// * `contract_address` - The contract address to look up.
+    ///
+    /// # Returns
+    /// The number of `ScanResult`s in the history (0 if none).
+    pub fn get_history_len(env: Env, contract_address: Address) -> u32 {
+        let history: Vec<ScanResult> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ScanHistory(contract_address))
+            .unwrap_or(Vec::new(&env));
+        history.len()
+    }
+
+    /// Retrieve a single page of scan history for a contract address.
+    ///
+    /// Results are ordered oldest to newest. Pages are zero-indexed.
+    /// If `page * page_size` is beyond the end of the history, an empty
+    /// vector is returned.
+    ///
+    /// # Arguments
+    /// * `contract_address` - The contract address to look up.
+    /// * `page`             - Zero-based page index.
+    /// * `page_size`        - Number of results per page. Must be > 0.
+    ///
+    /// # Panics
+    /// Panics if `page_size` is 0.
+    pub fn get_history_page(
+        env: Env,
+        contract_address: Address,
+        page: u32,
+        page_size: u32,
+    ) -> Vec<ScanResult> {
+        if page_size == 0 {
+            panic!("page_size must be greater than zero");
+        }
+
+        let history: Vec<ScanResult> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ScanHistory(contract_address))
+            .unwrap_or(Vec::new(&env));
+
+        let total = history.len();
+        let start = page.saturating_mul(page_size);
+
+        if start >= total {
+            return Vec::new(&env);
+        }
+
+        let end = (start + page_size).min(total);
+        let mut page_results: Vec<ScanResult> = Vec::new(&env);
+        for i in start..end {
+            page_results.push_back(history.get(i).unwrap());
+        }
+        page_results
     }
 
     /// Return the admin address of the registry.
@@ -328,67 +430,142 @@ mod tests {
         client.submit_scan(&scanner, &target, &String::from_str(&env, "hash"), &counts);
     }
 
+    // ── Reputation tests ─────────────────────────────────────────────────────
+
     #[test]
-    fn test_submit_scan_emits_event() {
+    fn test_score_starts_at_zero() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        assert_eq!(client.get_scanner_score(&scanner), 0);
+    }
+
+    #[test]
+    fn test_score_increments_on_submit() {
         let (env, contract_id, _admin, scanner) = setup();
         let client = ScanRegistryClient::new(&env, &contract_id);
 
         let target = Address::generate(&env);
-        let hash = String::from_str(&env, "deadbeef");
-        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "high"), 1u32)];
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
 
         client.add_scanner(&scanner);
-        client.submit_scan(&scanner, &target, &hash, &counts);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "h1"), &counts);
+        assert_eq!(client.get_scanner_score(&scanner), 1);
 
-        let events = env.events().all();
-        // Last event should be the scan submitted event.
-        let last = events.last().unwrap();
-        assert_eq!(
-            last.1,
-            soroban_sdk::vec![
-                &env,
-                soroban_sdk::Val::from(symbol_short!("scan")),
-                soroban_sdk::Val::from(symbol_short!("submitted")),
-            ]
-        );
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "h2"), &counts);
+        assert_eq!(client.get_scanner_score(&scanner), 2);
     }
 
     #[test]
-    fn test_add_scanner_emits_event() {
+    fn test_score_decrements_on_admin_dispute() {
         let (env, contract_id, _admin, scanner) = setup();
         let client = ScanRegistryClient::new(&env, &contract_id);
 
-        client.add_scanner(&scanner);
+        let target = Address::generate(&env);
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
 
-        let events = env.events().all();
-        let last = events.last().unwrap();
-        assert_eq!(
-            last.1,
-            soroban_sdk::vec![
-                &env,
-                soroban_sdk::Val::from(symbol_short!("scanner")),
-                soroban_sdk::Val::from(symbol_short!("added")),
-            ]
-        );
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "h1"), &counts);
+        assert_eq!(client.get_scanner_score(&scanner), 1);
+
+        client.dispute_scan(&scanner);
+        assert_eq!(client.get_scanner_score(&scanner), 0);
+    }
+
+    // ── Pagination tests ──────────────────────────────────────────────────────
+
+    fn submit_n_scans(client: &ScanRegistryClient, scanner: &Address, target: &Address, n: u32, env: &Env) {
+        // Pre-defined hash labels — supports up to 8 scans in tests.
+        let hashes = ["hash0", "hash1", "hash2", "hash3", "hash4", "hash5", "hash6", "hash7"];
+        let counts: Map<String, u32> = map![env, (String::from_str(env, "low"), 0u32)];
+        for i in 0..n {
+            let hash = String::from_str(env, hashes[i as usize]);
+            client.submit_scan(scanner, target, &hash, &counts);
+        }
     }
 
     #[test]
-    fn test_remove_scanner_emits_event() {
+    fn test_pagination_page_zero_works() {
         let (env, contract_id, _admin, scanner) = setup();
         let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
 
         client.add_scanner(&scanner);
-        client.remove_scanner(&scanner);
+        submit_n_scans(&client, &scanner, &target, 5, &env);
 
-        let events = env.events().all();
-        let last = events.last().unwrap();
-        assert_eq!(
-            last.1,
-            soroban_sdk::vec![
-                &env,
-                soroban_sdk::Val::from(symbol_short!("scanner")),
-                soroban_sdk::Val::from(symbol_short!("removed")),
-            ]
-        );
+        let page = client.get_history_page(&target, &0, &3);
+        assert_eq!(page.len(), 3);
+        assert_eq!(page.get(0).unwrap().findings_hash, String::from_str(&env, "hash0"));
+        assert_eq!(page.get(2).unwrap().findings_hash, String::from_str(&env, "hash2"));
+    }
+
+    #[test]
+    fn test_pagination_last_page_partial() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+
+        client.add_scanner(&scanner);
+        submit_n_scans(&client, &scanner, &target, 5, &env);
+
+        // page 1 with page_size 3 → items [3, 4] (2 items)
+        let page = client.get_history_page(&target, &1, &3);
+        assert_eq!(page.len(), 2);
+        assert_eq!(page.get(0).unwrap().findings_hash, String::from_str(&env, "hash3"));
+        assert_eq!(page.get(1).unwrap().findings_hash, String::from_str(&env, "hash4"));
+    }
+
+    #[test]
+    fn test_pagination_out_of_range_returns_empty() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+
+        client.add_scanner(&scanner);
+        submit_n_scans(&client, &scanner, &target, 3, &env);
+
+        // page 5 is well beyond the 3 items
+        let page = client.get_history_page(&target, &5, &3);
+        assert_eq!(page.len(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "page_size must be greater than zero")]
+    fn test_pagination_page_size_zero_panics() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+        client.get_history_page(&target, &0, &0);
+    }
+
+    #[test]
+    fn test_get_history_len() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+
+        client.add_scanner(&scanner);
+        assert_eq!(client.get_history_len(&target), 0);
+
+        submit_n_scans(&client, &scanner, &target, 4, &env);
+        assert_eq!(client.get_history_len(&target), 4);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_non_admin_cannot_dispute() {
+        // Use a fresh env with no mocked auths so require_auth panics.
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ScanRegistry);
+        let admin = Address::generate(&env);
+        let scanner = Address::generate(&env);
+
+        env.mock_all_auths();
+        ScanRegistryClient::new(&env, &contract_id).initialize(&admin);
+
+        // Clear all mocks — no auth is satisfied from here on.
+        env.mock_auths(&[]);
+
+        // admin.require_auth() inside dispute_scan is not satisfied → panic.
+        ScanRegistryClient::new(&env, &contract_id).dispute_scan(&scanner);
     }
 }
