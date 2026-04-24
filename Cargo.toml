@@ -21,6 +21,7 @@ members = [
     "secure/secure_vault",
     "secure/protected_admin",
     "secure/secure_transfer",
+    "secure/secure_burn",
     "registry",
 ]
 
