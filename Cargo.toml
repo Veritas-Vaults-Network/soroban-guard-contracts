@@ -27,6 +27,7 @@ members = [
     "secure/protected_admin",
     "secure/secure_transfer",
     "secure/secure_burn",
+    "secure/secure_pausable",
     "registry",
 ]
 
