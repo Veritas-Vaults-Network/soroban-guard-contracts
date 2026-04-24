@@ -35,6 +35,8 @@ pub enum DataKey {
     LatestScan(Address),
     /// Full ordered history of scan results for a contract address
     ScanHistory(Address),
+    /// Reputation score for a scanner address (i32, default 0)
+    ScannerScore(Address),
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -128,6 +130,9 @@ impl ScanRegistry {
             panic!("not a verified scanner");
         }
 
+        // Keep a copy for the score key before scanner is moved into ScanResult.
+        let score_key = DataKey::ScannerScore(scanner.clone());
+
         let result = ScanResult {
             scanner,
             timestamp: env.ledger().timestamp(),
@@ -149,6 +154,49 @@ impl ScanRegistry {
             .unwrap_or(Vec::new(&env));
         history.push_back(result);
         env.storage().persistent().set(&history_key, &history);
+
+        // Increment scanner reputation score.
+        let score: i32 = env
+            .storage()
+            .persistent()
+            .get(&score_key)
+            .unwrap_or(0i32);
+        env.storage()
+            .persistent()
+            .set(&score_key, &score.saturating_add(1));
+    }
+
+    // ── Reputation ───────────────────────────────────────────────────────────
+
+    /// Dispute a scanner's submission (admin only), decrementing their score by 1.
+    ///
+    /// # Arguments
+    /// * `scanner` - The scanner whose score should be decremented.
+    ///
+    /// # Panics
+    /// Panics if the caller is not the admin.
+    pub fn dispute_scan(env: Env, scanner: Address) {
+        Self::require_admin(&env);
+        let score_key = DataKey::ScannerScore(scanner);
+        let score: i32 = env
+            .storage()
+            .persistent()
+            .get(&score_key)
+            .unwrap_or(0i32);
+        env.storage()
+            .persistent()
+            .set(&score_key, &score.saturating_sub(1));
+    }
+
+    /// Return the reputation score for a scanner (defaults to 0).
+    ///
+    /// # Arguments
+    /// * `scanner` - The scanner address to query.
+    pub fn get_scanner_score(env: Env, scanner: Address) -> i32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ScannerScore(scanner))
+            .unwrap_or(0i32)
     }
 
     // ── Queries ──────────────────────────────────────────────────────────────
@@ -307,5 +355,65 @@ mod tests {
 
         // Attempting to submit after removal should panic.
         client.submit_scan(&scanner, &target, &String::from_str(&env, "hash"), &counts);
+    }
+
+    // ── Reputation tests ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_score_starts_at_zero() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        assert_eq!(client.get_scanner_score(&scanner), 0);
+    }
+
+    #[test]
+    fn test_score_increments_on_submit() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let target = Address::generate(&env);
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
+
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "h1"), &counts);
+        assert_eq!(client.get_scanner_score(&scanner), 1);
+
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "h2"), &counts);
+        assert_eq!(client.get_scanner_score(&scanner), 2);
+    }
+
+    #[test]
+    fn test_score_decrements_on_admin_dispute() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let target = Address::generate(&env);
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
+
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "h1"), &counts);
+        assert_eq!(client.get_scanner_score(&scanner), 1);
+
+        client.dispute_scan(&scanner);
+        assert_eq!(client.get_scanner_score(&scanner), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_non_admin_cannot_dispute() {
+        // Use a fresh env with no mocked auths so require_auth panics.
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ScanRegistry);
+        let admin = Address::generate(&env);
+        let scanner = Address::generate(&env);
+
+        env.mock_all_auths();
+        ScanRegistryClient::new(&env, &contract_id).initialize(&admin);
+
+        // Clear all mocks — no auth is satisfied from here on.
+        env.mock_auths(&[]);
+
+        // admin.require_auth() inside dispute_scan is not satisfied → panic.
+        ScanRegistryClient::new(&env, &contract_id).dispute_scan(&scanner);
     }
 }
