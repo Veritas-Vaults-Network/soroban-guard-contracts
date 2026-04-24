@@ -15,6 +15,7 @@ members = [
     "vulnerable/unsafe_storage",
     "vulnerable/zero_deposit",
     "vulnerable/reentrancy",
+    "vulnerable/replay_attack",
     "vulnerable/dust_griefing",
     "vulnerable/negative_transfer",
     "vulnerable/string_admin",
