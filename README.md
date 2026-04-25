@@ -45,11 +45,46 @@ soroban-guard-contracts/
 
 | Crate | Context | Vulnerability |
 |---|---|---|
-| `missing_auth` | Token contract | `transfer()` mutates balances without `require_auth()` |
-| `missing_ttl` | Token contract | Persistent balances expire because the contract never calls `extend_ttl()` |
-| `unchecked_math` | Staking contract | Reward calc uses raw `*` on `u64` — overflows silently |
-| `unprotected_admin` | Escrow contract | `set_admin()` and `upgrade()` have no caller check |
-| `unsafe_storage` | KYC registry | Any caller can write to any account's storage slot |
+| [`missing_auth`](./vulnerable/missing_auth/README.md) | Token contract | `transfer()` mutates balances without `require_auth()` |
+| [`missing_ttl`](./vulnerable/missing_ttl/README.md) | Token contract | Persistent balances expire because the contract never calls `extend_ttl()` |
+| [`unchecked_math`](./vulnerable/unchecked_math/README.md) | Staking contract | Reward calc uses raw `*` on `u64` — overflows silently |
+| [`unprotected_admin`](./vulnerable/unprotected_admin/README.md) | Escrow contract | `set_admin()` and `upgrade()` have no caller check |
+| [`unsafe_storage`](./vulnerable/unsafe_storage/README.md) | KYC registry | Any caller can write to any account's storage slot |
+| [`admin_rugpull`](./vulnerable/admin_rugpull/README.md) | Admin contract | Single-step admin transfer with no acceptance confirmation |
+| [`allowance_not_decremented`](./vulnerable/allowance_not_decremented/README.md) | Token contract | Allowance not reduced after `transfer_from` |
+| [`call_depth`](./vulnerable/call_depth/README.md) | Cross-contract | Unbounded recursive calls exhaust the call stack |
+| [`div_by_zero`](./vulnerable/div_by_zero/README.md) | Fee contract | Division by zero when pool or supply is empty |
+| [`double_claim`](./vulnerable/double_claim/README.md) | Staking contract | Reward window never resets — same period claimed repeatedly |
+| [`dust_griefing`](./vulnerable/dust_griefing/README.md) | Vault contract | No minimum deposit — storage bloated with dust entries |
+| [`flash_loan_no_check`](./vulnerable/flash_loan_no_check/README.md) | Lending contract | Flash loan repayment not verified before returning |
+| [`instant_oracle`](./vulnerable/instant_oracle/README.md) | DEX contract | Single-block oracle price is manipulable via flash loan |
+| [`key_collision`](./vulnerable/key_collision/README.md) | Token contract | Different data types share the same storage key |
+| [`leaky_events`](./vulnerable/leaky_events/README.md) | Registry contract | Sensitive data emitted in public contract events |
+| [`missing_events`](./vulnerable/missing_events/README.md) | Token contract | No events emitted — off-chain indexers are blind |
+| [`negative_transfer`](./vulnerable/negative_transfer/README.md) | Token contract | Negative amount reverses transfer direction |
+| [`no_slippage`](./vulnerable/no_slippage/README.md) | DEX contract | No `min_out` guard — sandwich attacks extract value |
+| [`reentrancy`](./vulnerable/reentrancy/README.md) | Vault contract | External call before state update enables re-entrancy |
+| [`reinit_attack`](./vulnerable/reinit_attack/README.md) | Any contract | `initialize()` callable multiple times — admin replaced |
+| [`replay_attack`](./vulnerable/replay_attack/README.md) | Signature contract | Signed messages not invalidated — replayable indefinitely |
+| [`scanner_impersonation`](./vulnerable/scanner_impersonation/README.md) | Registry contract | Scanner address not verified against approved list |
+| [`self_transfer`](./vulnerable/self_transfer/README.md) | Token contract | `from == to` corrupts balance accounting |
+| [`sensitive_storage`](./vulnerable/sensitive_storage/README.md) | Registry contract | Secrets stored in publicly readable contract storage |
+| [`stale_oracle`](./vulnerable/stale_oracle/README.md) | DEX contract | Oracle price used without staleness check |
+| [`string_admin`](./vulnerable/string_admin/README.md) | Admin contract | Admin stored as `String` — bypasses `require_auth` |
+| [`timestamp_lock`](./vulnerable/timestamp_lock/README.md) | Vault contract | Time-lock uses manipulable `ledger().timestamp()` |
+| [`unbounded_storage`](./vulnerable/unbounded_storage/README.md) | Registry contract | Unbounded collection growth exhausts storage |
+| [`uncapped_rate`](./vulnerable/uncapped_rate/README.md) | Staking contract | Reward rate has no upper bound — pool drainable |
+| [`unchecked_math`](./vulnerable/unchecked_math/README.md) | Staking contract | Raw arithmetic overflows silently |
+| [`underflow_transfer`](./vulnerable/underflow_transfer/README.md) | Token contract | Unchecked subtraction wraps balance to `u64::MAX` |
+| [`unprotected_burn`](./vulnerable/unprotected_burn/README.md) | Token contract | `burn()` callable by anyone — destroys any account's tokens |
+| [`unprotected_delete`](./vulnerable/unprotected_delete/README.md) | Any contract | Storage wipe callable without admin auth |
+| [`unprotected_emergency_withdraw`](./vulnerable/unprotected_emergency_withdraw/README.md) | Vault contract | Emergency drain callable by any address |
+| [`unprotected_fee_withdraw`](./vulnerable/unprotected_fee_withdraw/README.md) | DEX contract | Fee withdrawal open to any caller |
+| [`unprotected_mint`](./vulnerable/unprotected_mint/README.md) | Token contract | `mint()` callable by anyone — unlimited supply inflation |
+| [`unsafe_cast`](./vulnerable/unsafe_cast/README.md) | Token contract | Integer cast truncates or wraps silently |
+| [`zero_admin`](./vulnerable/zero_admin/README.md) | Admin contract | Admin set to zero address — contract permanently locked |
+| [`zero_deposit`](./vulnerable/zero_deposit/README.md) | Vault contract | Zero-value deposit accepted — storage griefing |
+| [`zero_stake`](./vulnerable/zero_stake/README.md) | Staking contract | Zero-value stake accepted — division-by-zero risk |
 
 ### Secure
 

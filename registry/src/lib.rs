@@ -302,6 +302,31 @@ impl ScanRegistry {
         page_results
     }
 
+    /// Retrieve the latest scan result for each contract in the batch.
+    ///
+    /// Returns `None` for any contract that has no scan history.
+    /// Capped at 20 addresses to prevent memory DoS.
+    ///
+    /// # Panics
+    /// Panics if `contracts.len() > 20`.
+    pub fn get_latest_scans_batch(
+        env: Env,
+        contracts: Vec<Address>,
+    ) -> Vec<Option<ScanResult>> {
+        if contracts.len() > 20 {
+            panic!("batch size exceeds maximum of 20");
+        }
+        let mut results: Vec<Option<ScanResult>> = Vec::new(&env);
+        for contract in contracts.iter() {
+            let latest = env
+                .storage()
+                .persistent()
+                .get(&DataKey::LatestScan(contract));
+            results.push_back(latest);
+        }
+        results
+    }
+
     /// Return the admin address of the registry.
     ///
     /// # Returns
@@ -567,5 +592,54 @@ mod tests {
 
         // admin.require_auth() inside dispute_scan is not satisfied → panic.
         ScanRegistryClient::new(&env, &contract_id).dispute_scan(&scanner);
+    }
+
+    // ── get_latest_scans_batch tests ──────────────────────────────────────────
+
+    #[test]
+    #[should_panic(expected = "batch size exceeds maximum of 20")]
+    fn test_batch_too_large_panics() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let mut contracts: Vec<Address> = Vec::new(&env);
+        for _ in 0..21 {
+            contracts.push_back(Address::generate(&env));
+        }
+        client.get_latest_scans_batch(&contracts);
+    }
+
+    #[test]
+    fn test_batch_returns_latest_and_none_for_unscanned() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let scanned1 = Address::generate(&env);
+        let scanned2 = Address::generate(&env);
+        let unscanned = Address::generate(&env);
+
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 1u32)];
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &scanned1, &String::from_str(&env, "h1"), &counts);
+        client.submit_scan(&scanner, &scanned2, &String::from_str(&env, "h2"), &counts);
+
+        let mut batch: Vec<Address> = Vec::new(&env);
+        batch.push_back(scanned1.clone());
+        batch.push_back(scanned2.clone());
+        batch.push_back(unscanned.clone());
+
+        let results = client.get_latest_scans_batch(&batch);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results.get(0).unwrap().unwrap().findings_hash, String::from_str(&env, "h1"));
+        assert_eq!(results.get(1).unwrap().unwrap().findings_hash, String::from_str(&env, "h2"));
+        assert!(results.get(2).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_batch_empty_input_returns_empty() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let empty: Vec<Address> = Vec::new(&env);
+        let results = client.get_latest_scans_batch(&empty);
+        assert_eq!(results.len(), 0);
     }
 }
