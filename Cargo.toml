@@ -63,6 +63,7 @@ members = [
     "secure/protected_admin",
     "secure/secure_airdrop",
     "secure/secure_lending",
+    "secure/secure_vesting",
     "secure/protected_fee_withdraw",
     "secure/secure_burn",
     "secure/secure_token",
