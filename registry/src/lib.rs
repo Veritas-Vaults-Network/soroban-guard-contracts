@@ -12,6 +12,13 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Map, String, Vec};
 
+// ── Severity label constants ─────────────────────────────────────────────────
+
+pub const SEVERITY_CRITICAL: &str = "critical";
+pub const SEVERITY_HIGH: &str = "high";
+pub const SEVERITY_MEDIUM: &str = "medium";
+pub const SEVERITY_LOW: &str = "low";
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 /// Human-readable metadata about a scanned contract, set by its registered scanner.
@@ -46,6 +53,8 @@ pub enum DataKey {
     LatestScan(Address),
     /// Full ordered history of scan results for a contract address
     ScanHistory(Address),
+    /// Set of all contract addresses that have at least one scan (used as an index)
+    SeverityIndex,
     /// Reputation score for a scanner address (i32, default 0)
     ScannerScore(Address),
     /// Human-readable metadata for a contract address
@@ -181,6 +190,17 @@ impl ScanRegistry {
         history.push_back(result);
         env.storage().persistent().set(&history_key, &history);
 
+        // Maintain severity index.
+        let index_key = DataKey::SeverityIndex;
+        let mut index: Map<Address, ()> = env
+            .storage()
+            .persistent()
+            .get(&index_key)
+            .unwrap_or(Map::new(&env));
+        if !index.contains_key(contract_address.clone()) {
+            index.set(contract_address, ());
+            env.storage().persistent().set(&index_key, &index);
+        }
         // Increment scanner reputation score.
         let score: i32 = env
             .storage()
@@ -255,6 +275,63 @@ impl ScanRegistry {
             .unwrap_or(Vec::new(&env))
     }
 
+    /// Return contract addresses whose latest scan meets the given severity
+    /// thresholds.
+    ///
+    /// # Arguments
+    /// * `min_critical` - Minimum number of critical findings required.
+    /// * `min_high` - Minimum number of high findings required.
+    /// * `page` - Page number (0-indexed).
+    /// * `page_size` - Number of items per page. Use `0` to return all matches.
+    ///
+    /// # Returns
+    /// A vector of contract `Address`es whose latest scan satisfies both
+    /// `critical >= min_critical` and `high >= min_high`.
+    pub fn get_scans_by_min_severity(
+        env: Env,
+        min_critical: u32,
+        min_high: u32,
+        page: u32,
+        page_size: u32,
+    ) -> Vec<Address> {
+        let index: Map<Address, ()> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SeverityIndex)
+            .unwrap_or(Map::new(&env));
+
+        let mut matches: Vec<Address> = Vec::new(&env);
+
+        for (addr, _) in index {
+            if let Some(scan) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, ScanResult>(&DataKey::LatestScan(addr.clone()))
+            {
+                let critical = Self::get_severity_count(&env, &scan.severity_counts, SEVERITY_CRITICAL);
+                let high = Self::get_severity_count(&env, &scan.severity_counts, SEVERITY_HIGH);
+                if critical >= min_critical && high >= min_high {
+                    matches.push_back(addr);
+                }
+            }
+        }
+
+        // Pagination
+        if page_size == 0 {
+            return matches;
+        }
+
+        let start = page * page_size;
+        if start >= matches.len() {
+            return Vec::new(&env);
+        }
+
+        let end = (start + page_size).min(matches.len());
+        let mut result: Vec<Address> = Vec::new(&env);
+        for i in start..end {
+            result.push_back(matches.get(i).unwrap());
+        }
+        result
     /// Return the total number of scan results stored for a contract address.
     ///
     /// # Arguments
@@ -402,6 +479,12 @@ impl ScanRegistry {
             .expect("not initialized");
         admin.require_auth();
     }
+
+    fn get_severity_count(env: &Env, severity_counts: &Map<String, u32>, label: &str) -> u32 {
+        severity_counts
+            .get(String::from_str(env, label))
+            .unwrap_or(0)
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -506,6 +589,127 @@ mod tests {
         client.submit_scan(&scanner, &target, &String::from_str(&env, "hash"), &counts);
     }
 
+    // ── get_scans_by_min_severity tests ──────────────────────────────────────
+
+    #[test]
+    fn test_get_scans_by_min_severity_filters() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        client.add_scanner(&scanner);
+
+        let target_low = Address::generate(&env);
+        let target_high = Address::generate(&env);
+        let target_crit = Address::generate(&env);
+
+        client.submit_scan(
+            &scanner,
+            &target_low,
+            &String::from_str(&env, "h1"),
+            &map![&env, (String::from_str(&env, "critical"), 0u32), (String::from_str(&env, "high"), 0u32)],
+        );
+        client.submit_scan(
+            &scanner,
+            &target_high,
+            &String::from_str(&env, "h2"),
+            &map![&env, (String::from_str(&env, "critical"), 0u32), (String::from_str(&env, "high"), 2u32)],
+        );
+        client.submit_scan(
+            &scanner,
+            &target_crit,
+            &String::from_str(&env, "h3"),
+            &map![&env, (String::from_str(&env, "critical"), 1u32), (String::from_str(&env, "high"), 1u32)],
+        );
+
+        // Require at least 1 critical and 1 high
+        let results = client.get_scans_by_min_severity(&1, &1, &0, &0);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results.get(0).unwrap(), target_crit);
+    }
+
+    #[test]
+    fn test_get_scans_by_min_severity_zero_returns_all() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        client.add_scanner(&scanner);
+
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+
+        client.submit_scan(
+            &scanner,
+            &a,
+            &String::from_str(&env, "h1"),
+            &map![&env, (String::from_str(&env, "critical"), 0u32)],
+        );
+        client.submit_scan(
+            &scanner,
+            &b,
+            &String::from_str(&env, "h2"),
+            &map![&env, (String::from_str(&env, "high"), 5u32)],
+        );
+
+        let results = client.get_scans_by_min_severity(&0, &0, &0, &0);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_get_scans_by_min_severity_high_threshold_returns_empty() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        client.add_scanner(&scanner);
+
+        let target = Address::generate(&env);
+        client.submit_scan(
+            &scanner,
+            &target,
+            &String::from_str(&env, "h1"),
+            &map![&env, (String::from_str(&env, "critical"), 1u32), (String::from_str(&env, "high"), 1u32)],
+        );
+
+        let results = client.get_scans_by_min_severity(&100, &100, &0, &0);
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_get_scans_by_min_severity_pagination() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        client.add_scanner(&scanner);
+
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+        let c = Address::generate(&env);
+
+        client.submit_scan(
+            &scanner,
+            &a,
+            &String::from_str(&env, "h1"),
+            &map![&env, (String::from_str(&env, "critical"), 1u32)],
+        );
+        client.submit_scan(
+            &scanner,
+            &b,
+            &String::from_str(&env, "h2"),
+            &map![&env, (String::from_str(&env, "critical"), 1u32)],
+        );
+        client.submit_scan(
+            &scanner,
+            &c,
+            &String::from_str(&env, "h3"),
+            &map![&env, (String::from_str(&env, "critical"), 1u32)],
+        );
+
+        // page 0, size 2
+        let page0 = client.get_scans_by_min_severity(&1, &0, &0, &2);
+        assert_eq!(page0.len(), 2);
+
+        // page 1, size 2
+        let page1 = client.get_scans_by_min_severity(&1, &0, &1, &2);
+        assert_eq!(page1.len(), 1);
+
+        // page 2, size 2 -> empty
+        let page2 = client.get_scans_by_min_severity(&1, &0, &2, &2);
+        assert_eq!(page2.len(), 0);
     // ── Reputation tests ─────────────────────────────────────────────────────
 
     #[test]
@@ -764,3 +968,4 @@ mod tests {
         assert_eq!(results.len(), 0);
     }
 }
+
