@@ -62,6 +62,7 @@ members = [
     "secure/secure_escrow",
     "secure/protected_admin",
     "secure/secure_airdrop",
+    "secure/secure_lending",
     "secure/protected_fee_withdraw",
     "secure/secure_burn",
     "secure/secure_token",
