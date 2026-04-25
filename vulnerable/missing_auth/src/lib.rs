@@ -27,7 +27,9 @@ impl TokenContract {
     }
 
     /// VULNERABLE: transfers `amount` from `from` to `to` without verifying
-    /// that the caller is `from`. No `env.require_auth(&from)` call.
+    /// that the caller is `from`. No `from.require_auth()` call.
+    // The missing require_auth is intentional — this contract demonstrates the vulnerability.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
         // ❌ Missing: from.require_auth();
 

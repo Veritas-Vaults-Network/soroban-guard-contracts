@@ -23,7 +23,7 @@ pub enum DataKey {
 }
 
 pub(crate) fn get_admin(env: &Env) -> Address {
-    env.storage().persistent().get(&DataKey::Admin).unwrap()
+    env.storage().persistent().get(&DataKey::Admin).expect("admin not initialized")
 }
 
 #[contract]

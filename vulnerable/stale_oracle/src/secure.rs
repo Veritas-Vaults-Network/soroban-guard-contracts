@@ -37,7 +37,7 @@ impl SecureLending {
             .storage()
             .persistent()
             .get(&DataKey::OracleId)
-            .unwrap();
+            .expect("oracle not initialized");
         let oracle = MockOracleClient::new(&env, &oracle_id);
         let price = oracle.get_price();
         let last_updated: u64 = oracle.last_updated();

@@ -12,7 +12,25 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Map, String, Vec};
 
+// ── Severity label constants ─────────────────────────────────────────────────
+
+pub const SEVERITY_CRITICAL: &str = "critical";
+pub const SEVERITY_HIGH: &str = "high";
+pub const SEVERITY_MEDIUM: &str = "medium";
+pub const SEVERITY_LOW: &str = "low";
+
 // ── Types ────────────────────────────────────────────────────────────────────
+
+/// Human-readable metadata about a scanned contract, set by its registered scanner.
+#[contracttype]
+#[derive(Clone)]
+pub struct ContractMetadata {
+    pub name: String,
+    pub version: String,
+    /// Unix timestamp of the audit date.
+    pub audit_date: u64,
+    pub repo_url: String,
+}
 
 #[contracttype]
 #[derive(Clone)]
@@ -35,8 +53,12 @@ pub enum DataKey {
     LatestScan(Address),
     /// Full ordered history of scan results for a contract address
     ScanHistory(Address),
+    /// Set of all contract addresses that have at least one scan (used as an index)
+    SeverityIndex,
     /// Reputation score for a scanner address (i32, default 0)
     ScannerScore(Address),
+    /// Human-readable metadata for a contract address
+    Metadata(Address),
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -168,6 +190,17 @@ impl ScanRegistry {
         history.push_back(result);
         env.storage().persistent().set(&history_key, &history);
 
+        // Maintain severity index.
+        let index_key = DataKey::SeverityIndex;
+        let mut index: Map<Address, ()> = env
+            .storage()
+            .persistent()
+            .get(&index_key)
+            .unwrap_or(Map::new(&env));
+        if !index.contains_key(contract_address.clone()) {
+            index.set(contract_address, ());
+            env.storage().persistent().set(&index_key, &index);
+        }
         // Increment scanner reputation score.
         let score: i32 = env
             .storage()
@@ -242,6 +275,63 @@ impl ScanRegistry {
             .unwrap_or(Vec::new(&env))
     }
 
+    /// Return contract addresses whose latest scan meets the given severity
+    /// thresholds.
+    ///
+    /// # Arguments
+    /// * `min_critical` - Minimum number of critical findings required.
+    /// * `min_high` - Minimum number of high findings required.
+    /// * `page` - Page number (0-indexed).
+    /// * `page_size` - Number of items per page. Use `0` to return all matches.
+    ///
+    /// # Returns
+    /// A vector of contract `Address`es whose latest scan satisfies both
+    /// `critical >= min_critical` and `high >= min_high`.
+    pub fn get_scans_by_min_severity(
+        env: Env,
+        min_critical: u32,
+        min_high: u32,
+        page: u32,
+        page_size: u32,
+    ) -> Vec<Address> {
+        let index: Map<Address, ()> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SeverityIndex)
+            .unwrap_or(Map::new(&env));
+
+        let mut matches: Vec<Address> = Vec::new(&env);
+
+        for (addr, _) in index {
+            if let Some(scan) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, ScanResult>(&DataKey::LatestScan(addr.clone()))
+            {
+                let critical = Self::get_severity_count(&env, &scan.severity_counts, SEVERITY_CRITICAL);
+                let high = Self::get_severity_count(&env, &scan.severity_counts, SEVERITY_HIGH);
+                if critical >= min_critical && high >= min_high {
+                    matches.push_back(addr);
+                }
+            }
+        }
+
+        // Pagination
+        if page_size == 0 {
+            return matches;
+        }
+
+        let start = page * page_size;
+        if start >= matches.len() {
+            return Vec::new(&env);
+        }
+
+        let end = (start + page_size).min(matches.len());
+        let mut result: Vec<Address> = Vec::new(&env);
+        for i in start..end {
+            result.push_back(matches.get(i).unwrap());
+        }
+        result
     /// Return the total number of scan results stored for a contract address.
     ///
     /// # Arguments
@@ -297,9 +387,34 @@ impl ScanRegistry {
         let end = (start + page_size).min(total);
         let mut page_results: Vec<ScanResult> = Vec::new(&env);
         for i in start..end {
-            page_results.push_back(history.get(i).unwrap());
+            page_results.push_back(history.get(i).expect("history index out of bounds"));
         }
         page_results
+    }
+
+    /// Retrieve the latest scan result for each contract in the batch.
+    ///
+    /// Returns `None` for any contract that has no scan history.
+    /// Capped at 20 addresses to prevent memory DoS.
+    ///
+    /// # Panics
+    /// Panics if `contracts.len() > 20`.
+    pub fn get_latest_scans_batch(
+        env: Env,
+        contracts: Vec<Address>,
+    ) -> Vec<Option<ScanResult>> {
+        if contracts.len() > 20 {
+            panic!("batch size exceeds maximum of 20");
+        }
+        let mut results: Vec<Option<ScanResult>> = Vec::new(&env);
+        for contract in contracts.iter() {
+            let latest = env
+                .storage()
+                .persistent()
+                .get(&DataKey::LatestScan(contract));
+            results.push_back(latest);
+        }
+        results
     }
 
     /// Return the admin address of the registry.
@@ -316,6 +431,44 @@ impl ScanRegistry {
             .expect("not initialized")
     }
 
+    // ── Metadata ─────────────────────────────────────────────────────────────
+
+    /// Set human-readable metadata for a contract.
+    ///
+    /// Only the scanner that has previously submitted a scan for `contract_address`
+    /// may set its metadata.
+    ///
+    /// # Panics
+    /// Panics if `scanner` has never submitted a scan for `contract_address`,
+    /// or if `scanner` has not signed the transaction.
+    pub fn set_metadata(env: Env, scanner: Address, contract_address: Address, metadata: ContractMetadata) {
+        scanner.require_auth();
+
+        // Verify the scanner has an existing scan result for this contract.
+        let latest: Option<ScanResult> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::LatestScan(contract_address.clone()));
+        let scan = latest.expect("no scan found for this contract");
+        if scan.scanner != scanner {
+            panic!("only the contract's scanner may set metadata");
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Metadata(contract_address), &metadata);
+    }
+
+    /// Retrieve metadata for a contract address.
+    ///
+    /// # Returns
+    /// `Some(ContractMetadata)` if metadata has been set, `None` otherwise.
+    pub fn get_metadata(env: Env, contract_address: Address) -> Option<ContractMetadata> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Metadata(contract_address))
+    }
+
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     fn require_admin(env: &Env) {
@@ -325,6 +478,12 @@ impl ScanRegistry {
             .get(&DataKey::Admin)
             .expect("not initialized");
         admin.require_auth();
+    }
+
+    fn get_severity_count(env: &Env, severity_counts: &Map<String, u32>, label: &str) -> u32 {
+        severity_counts
+            .get(String::from_str(env, label))
+            .unwrap_or(0)
     }
 }
 
@@ -430,6 +589,127 @@ mod tests {
         client.submit_scan(&scanner, &target, &String::from_str(&env, "hash"), &counts);
     }
 
+    // ── get_scans_by_min_severity tests ──────────────────────────────────────
+
+    #[test]
+    fn test_get_scans_by_min_severity_filters() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        client.add_scanner(&scanner);
+
+        let target_low = Address::generate(&env);
+        let target_high = Address::generate(&env);
+        let target_crit = Address::generate(&env);
+
+        client.submit_scan(
+            &scanner,
+            &target_low,
+            &String::from_str(&env, "h1"),
+            &map![&env, (String::from_str(&env, "critical"), 0u32), (String::from_str(&env, "high"), 0u32)],
+        );
+        client.submit_scan(
+            &scanner,
+            &target_high,
+            &String::from_str(&env, "h2"),
+            &map![&env, (String::from_str(&env, "critical"), 0u32), (String::from_str(&env, "high"), 2u32)],
+        );
+        client.submit_scan(
+            &scanner,
+            &target_crit,
+            &String::from_str(&env, "h3"),
+            &map![&env, (String::from_str(&env, "critical"), 1u32), (String::from_str(&env, "high"), 1u32)],
+        );
+
+        // Require at least 1 critical and 1 high
+        let results = client.get_scans_by_min_severity(&1, &1, &0, &0);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results.get(0).unwrap(), target_crit);
+    }
+
+    #[test]
+    fn test_get_scans_by_min_severity_zero_returns_all() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        client.add_scanner(&scanner);
+
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+
+        client.submit_scan(
+            &scanner,
+            &a,
+            &String::from_str(&env, "h1"),
+            &map![&env, (String::from_str(&env, "critical"), 0u32)],
+        );
+        client.submit_scan(
+            &scanner,
+            &b,
+            &String::from_str(&env, "h2"),
+            &map![&env, (String::from_str(&env, "high"), 5u32)],
+        );
+
+        let results = client.get_scans_by_min_severity(&0, &0, &0, &0);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_get_scans_by_min_severity_high_threshold_returns_empty() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        client.add_scanner(&scanner);
+
+        let target = Address::generate(&env);
+        client.submit_scan(
+            &scanner,
+            &target,
+            &String::from_str(&env, "h1"),
+            &map![&env, (String::from_str(&env, "critical"), 1u32), (String::from_str(&env, "high"), 1u32)],
+        );
+
+        let results = client.get_scans_by_min_severity(&100, &100, &0, &0);
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_get_scans_by_min_severity_pagination() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        client.add_scanner(&scanner);
+
+        let a = Address::generate(&env);
+        let b = Address::generate(&env);
+        let c = Address::generate(&env);
+
+        client.submit_scan(
+            &scanner,
+            &a,
+            &String::from_str(&env, "h1"),
+            &map![&env, (String::from_str(&env, "critical"), 1u32)],
+        );
+        client.submit_scan(
+            &scanner,
+            &b,
+            &String::from_str(&env, "h2"),
+            &map![&env, (String::from_str(&env, "critical"), 1u32)],
+        );
+        client.submit_scan(
+            &scanner,
+            &c,
+            &String::from_str(&env, "h3"),
+            &map![&env, (String::from_str(&env, "critical"), 1u32)],
+        );
+
+        // page 0, size 2
+        let page0 = client.get_scans_by_min_severity(&1, &0, &0, &2);
+        assert_eq!(page0.len(), 2);
+
+        // page 1, size 2
+        let page1 = client.get_scans_by_min_severity(&1, &0, &1, &2);
+        assert_eq!(page1.len(), 1);
+
+        // page 2, size 2 -> empty
+        let page2 = client.get_scans_by_min_severity(&1, &0, &2, &2);
+        assert_eq!(page2.len(), 0);
     // ── Reputation tests ─────────────────────────────────────────────────────
 
     #[test]
@@ -550,6 +830,76 @@ mod tests {
         assert_eq!(client.get_history_len(&target), 4);
     }
 
+    // ── Metadata tests ────────────────────────────────────────────────────────
+
+    fn make_metadata(env: &Env) -> ContractMetadata {
+        ContractMetadata {
+            name: String::from_str(env, "MyToken"),
+            version: String::from_str(env, "1.0.0"),
+            audit_date: 1_700_000_000u64,
+            repo_url: String::from_str(env, "https://github.com/example/mytoken"),
+        }
+    }
+
+    #[test]
+    fn test_scanner_sets_and_gets_metadata() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let target = Address::generate(&env);
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
+
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash1"), &counts);
+
+        let meta = make_metadata(&env);
+        client.set_metadata(&scanner, &target, &meta);
+
+        let stored = client.get_metadata(&target).unwrap();
+        assert_eq!(stored.name, String::from_str(&env, "MyToken"));
+        assert_eq!(stored.version, String::from_str(&env, "1.0.0"));
+        assert_eq!(stored.audit_date, 1_700_000_000u64);
+        assert_eq!(stored.repo_url, String::from_str(&env, "https://github.com/example/mytoken"));
+    }
+
+    #[test]
+    fn test_get_metadata_returns_none_when_unset() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+        assert!(client.get_metadata(&target).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "only the contract's scanner may set metadata")]
+    fn test_non_scanner_cannot_set_metadata() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let target = Address::generate(&env);
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
+
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash1"), &counts);
+
+        // A different scanner tries to set metadata for a contract they didn't scan.
+        let other_scanner = Address::generate(&env);
+        client.add_scanner(&other_scanner);
+        client.set_metadata(&other_scanner, &target, &make_metadata(&env));
+    }
+
+    #[test]
+    #[should_panic(expected = "no scan found for this contract")]
+    fn test_metadata_requires_prior_scan() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let target = Address::generate(&env);
+        client.add_scanner(&scanner);
+        // No scan submitted — should panic.
+        client.set_metadata(&scanner, &target, &make_metadata(&env));
+    }
+
     #[test]
     #[should_panic]
     fn test_non_admin_cannot_dispute() {
@@ -568,4 +918,54 @@ mod tests {
         // admin.require_auth() inside dispute_scan is not satisfied → panic.
         ScanRegistryClient::new(&env, &contract_id).dispute_scan(&scanner);
     }
+
+    // ── get_latest_scans_batch tests ──────────────────────────────────────────
+
+    #[test]
+    #[should_panic(expected = "batch size exceeds maximum of 20")]
+    fn test_batch_too_large_panics() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let mut contracts: Vec<Address> = Vec::new(&env);
+        for _ in 0..21 {
+            contracts.push_back(Address::generate(&env));
+        }
+        client.get_latest_scans_batch(&contracts);
+    }
+
+    #[test]
+    fn test_batch_returns_latest_and_none_for_unscanned() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let scanned1 = Address::generate(&env);
+        let scanned2 = Address::generate(&env);
+        let unscanned = Address::generate(&env);
+
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 1u32)];
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &scanned1, &String::from_str(&env, "h1"), &counts);
+        client.submit_scan(&scanner, &scanned2, &String::from_str(&env, "h2"), &counts);
+
+        let mut batch: Vec<Address> = Vec::new(&env);
+        batch.push_back(scanned1.clone());
+        batch.push_back(scanned2.clone());
+        batch.push_back(unscanned.clone());
+
+        let results = client.get_latest_scans_batch(&batch);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results.get(0).unwrap().unwrap().findings_hash, String::from_str(&env, "h1"));
+        assert_eq!(results.get(1).unwrap().unwrap().findings_hash, String::from_str(&env, "h2"));
+        assert!(results.get(2).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_batch_empty_input_returns_empty() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let empty: Vec<Address> = Vec::new(&env);
+        let results = client.get_latest_scans_batch(&empty);
+        assert_eq!(results.len(), 0);
+    }
 }
+

@@ -65,7 +65,7 @@ impl SecureMintToken {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap();
+            .expect("admin not initialized");
         // ✅ Admin must sign this transaction
         admin.require_auth();
 

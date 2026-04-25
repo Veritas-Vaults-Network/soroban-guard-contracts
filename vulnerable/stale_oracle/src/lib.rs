@@ -52,7 +52,7 @@ impl VulnerableLending {
             .storage()
             .persistent()
             .get(&DataKey::OracleId)
-            .unwrap();
+            .expect("oracle not initialized");
         let price = MockOracleClient::new(&env, &oracle_id).get_price();
         let collateral: i128 = env
             .storage()

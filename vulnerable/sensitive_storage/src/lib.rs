@@ -42,14 +42,14 @@ impl SensitiveStorageContract {
         env.storage()
             .persistent()
             .get(&DataKey::SecretKey)
-            .unwrap()
+            .expect("secret key not set")
     }
 
     pub fn get_admin(env: Env) -> Address {
         env.storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap()
+            .expect("admin not initialized")
     }
 
     // -------------------------------------------------------------------------
@@ -70,7 +70,7 @@ impl SensitiveStorageContract {
         env.storage()
             .persistent()
             .get(&DataKey::Commitment)
-            .unwrap()
+            .expect("commitment not set")
     }
 }
 
