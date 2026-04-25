@@ -37,6 +37,8 @@ pub enum DataKey {
     ScanHistory(Address),
     /// Reputation score for a scanner address (i32, default 0)
     ScannerScore(Address),
+    /// Dedup guard: (scanner, contract, ledger_sequence, findings_hash) — stored in temporary storage
+    DedupKey(Address, Address, u32, String),
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -142,6 +144,13 @@ impl ScanRegistry {
         if !approved {
             panic!("not a verified scanner");
         }
+
+        // 3. Reject duplicate (scanner, contract, ledger, hash) submissions within the same ledger.
+        let dedup_key = DataKey::DedupKey(scanner.clone(), contract_address.clone(), env.ledger().sequence(), findings_hash.clone());
+        if env.storage().temporary().has(&dedup_key) {
+            panic!("duplicate submission");
+        }
+        env.storage().temporary().set(&dedup_key, &true);
 
         // Keep a copy for the score key before scanner is moved into ScanResult.
         let score_key = DataKey::ScannerScore(scanner.clone());
@@ -567,5 +576,58 @@ mod tests {
 
         // admin.require_auth() inside dispute_scan is not satisfied → panic.
         ScanRegistryClient::new(&env, &contract_id).dispute_scan(&scanner);
+    }
+
+    // ── Deduplication tests ───────────────────────────────────────────────────
+
+    /// Demonstrates the bug: without the fix, the same scanner could submit the
+    /// same hash twice in the same ledger and both records would appear.
+    /// With the fix applied, the second call panics with "duplicate submission".
+    #[test]
+    #[should_panic(expected = "duplicate submission")]
+    fn test_duplicate_same_hash_same_ledger_panics() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let target = Address::generate(&env);
+        let hash = String::from_str(&env, "abc123");
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
+
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &target, &hash, &counts);
+        // Second call with the same (scanner, contract, ledger) → must panic.
+        client.submit_scan(&scanner, &target, &hash, &counts);
+    }
+
+    /// After the fix, a duplicate submission in the same ledger panics.
+    #[test]
+    #[should_panic(expected = "duplicate submission")]
+    fn test_duplicate_submission_rejected() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let target = Address::generate(&env);
+        let hash = String::from_str(&env, "deadbeef");
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "critical"), 1u32)];
+
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &target, &hash, &counts);
+        client.submit_scan(&scanner, &target, &hash, &counts);
+    }
+
+    /// A different findings_hash in the same ledger is a distinct submission and must succeed.
+    #[test]
+    fn test_different_hash_same_ledger_allowed() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let target = Address::generate(&env);
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
+
+        client.add_scanner(&scanner);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash_a"), &counts);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash_b"), &counts);
+
+        assert_eq!(client.get_history_len(&target), 2);
     }
 }
