@@ -73,6 +73,9 @@ impl ScanRegistry {
     /// Emits `("scanner", "added", scanner)`.
     pub fn add_scanner(env: Env, scanner: Address) {
         Self::require_admin(&env);
+        if scanner == env.current_contract_address() {
+            panic!("contract cannot be a scanner");
+        }
         env.storage()
             .persistent()
             .set(&DataKey::Scanner(scanner.clone()), &true);
@@ -133,7 +136,12 @@ impl ScanRegistry {
         // 1. The scanner must have signed this transaction.
         scanner.require_auth();
 
-        // 2. The scanner must be in the approved list.
+        // 2. The contract itself cannot act as a scanner.
+        if scanner == env.current_contract_address() {
+            panic!("contract cannot be a scanner");
+        }
+
+        // 3. The scanner must be in the approved list.
         let approved: bool = env
             .storage()
             .persistent()
@@ -567,5 +575,37 @@ mod tests {
 
         // admin.require_auth() inside dispute_scan is not satisfied → panic.
         ScanRegistryClient::new(&env, &contract_id).dispute_scan(&scanner);
+    }
+
+    // ── Self-scanner tests ────────────────────────────────────────────────────
+
+    /// BUG DEMO: without the self-address check the contract could register
+    /// itself. The fix now rejects it with "contract cannot be a scanner".
+    #[test]
+    #[should_panic(expected = "contract cannot be a scanner")]
+    fn test_add_scanner_rejects_self_address() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        client.add_scanner(&contract_id);
+    }
+
+    /// After the fix, a valid external scanner can still be registered normally.
+    #[test]
+    fn test_add_scanner_accepts_external_address() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        client.add_scanner(&scanner);
+        assert!(client.is_scanner(&scanner));
+    }
+
+    /// submit_scan also rejects the contract's own address as scanner.
+    #[test]
+    #[should_panic(expected = "contract cannot be a scanner")]
+    fn test_submit_scan_rejects_self_as_scanner() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
+        client.submit_scan(&contract_id, &target, &String::from_str(&env, "h"), &counts);
     }
 }
