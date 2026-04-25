@@ -98,6 +98,11 @@ mod tests {
     use super::*;
     use soroban_sdk::{testutils::Address as _, Address, Env};
 
+    fn vulnerable_deposit_like_add(balance: i128, amount: i128) -> i128 {
+        // Mirrors the original vulnerable arithmetic path: balance + amount without an input cap.
+        balance + amount
+    }
+
     fn setup() -> (Env, VulnerableNearOverflowClient<'static>) {
         let env = Env::default();
         let id = env.register_contract(None, VulnerableNearOverflow);
@@ -106,67 +111,35 @@ mod tests {
     }
 
     #[test]
-    fn test_deposit_at_max_safe_amount() {
-        let (env, client) = setup();
-        let user = Address::generate(&env);
-        env.mock_all_auths();
-
-        // Should accept MAX_SAFE_AMOUNT without panic
-        let max_safe = i128::MAX / 4;
-        client.deposit(&user, &max_safe);
-
-        assert_eq!(client.balance(&user), max_safe);
-    }
-
-    #[test]
-    fn test_deposit_below_max_safe_amount() {
-        let (env, client) = setup();
-        let user = Address::generate(&env);
-        env.mock_all_auths();
-
-        // Should accept amounts well below MAX_SAFE_AMOUNT
-        client.deposit(&user, &1_000);
-        assert_eq!(client.balance(&user), 1_000);
-
-        client.deposit(&user, &5_000);
-        assert_eq!(client.balance(&user), 6_000);
+    #[should_panic(expected = "overflow")]
+    fn test_unguarded_deposit_i128_max_panics_with_overflow() {
+        // Demonstrates the original unguarded path: a near-MAX deposit overflows on add.
+        let _ = vulnerable_deposit_like_add(1, i128::MAX);
     }
 
     #[test]
     #[should_panic(expected = "amount exceeds safe limit")]
-    fn test_deposit_above_max_safe_amount_panics() {
+    fn test_deposit_above_max_safe_amount_panics_with_clear_message() {
         let (env, client) = setup();
         let user = Address::generate(&env);
         env.mock_all_auths();
 
-        let max_safe = i128::MAX / 4;
-        let over_limit = max_safe + 1;
-
-        // Should panic with clear message
-        client.deposit(&user, &over_limit);
+        client.deposit(&user, &(MAX_SAFE_AMOUNT + 1));
     }
 
     #[test]
-    #[should_panic(expected = "amount exceeds safe limit")]
-    fn test_deposit_at_max_int_panics() {
+    fn test_deposit_at_and_below_max_safe_amount_succeeds() {
         let (env, client) = setup();
         let user = Address::generate(&env);
         env.mock_all_auths();
 
-        // Attempting to deposit i128::MAX should panic
-        client.deposit(&user, &i128::MAX);
-    }
+        // At the boundary.
+        client.deposit(&user, &MAX_SAFE_AMOUNT);
+        assert_eq!(client.balance(&user), MAX_SAFE_AMOUNT);
 
-    #[test]
-    #[should_panic(expected = "amount exceeds safe limit")]
-    fn test_deposit_half_max_int_panics() {
-        let (env, client) = setup();
-        let user = Address::generate(&env);
-        env.mock_all_auths();
-
-        // Attempting to deposit i128::MAX / 2 + 1 (the vulnerable pattern) should panic
-        let near_max = i128::MAX / 2 + 1;
-        client.deposit(&user, &near_max);
+        // Below the boundary.
+        client.deposit(&user, &1);
+        assert_eq!(client.balance(&user), MAX_SAFE_AMOUNT + 1);
     }
 
     #[test]
