@@ -4,7 +4,7 @@
 //! older than `MAX_STALENESS` seconds, preventing the contract from operating
 //! on stale data.
 
-use crate::{DataKey, oracle::MockOracleClient};
+use crate::{oracle::MockOracleClient, DataKey};
 use soroban_sdk::{contract, contractimpl, Address, Env};
 
 /// Maximum allowed age of an oracle price (in seconds).
@@ -19,16 +19,16 @@ impl SecureLending {
         if env.storage().persistent().has(&DataKey::OracleId) {
             panic!("already initialized");
         }
-        env.storage().persistent().set(&DataKey::OracleId, &oracle_id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::OracleId, &oracle_id);
     }
 
     pub fn deposit_collateral(env: Env, user: Address, amount: i128) {
         user.require_auth();
         let key = DataKey::Collateral(user);
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&key, &(current + amount));
+        env.storage().persistent().set(&key, &(current + amount));
     }
 
     /// ✅ Rejects the price if it is older than MAX_STALENESS.
@@ -37,7 +37,7 @@ impl SecureLending {
             .storage()
             .persistent()
             .get(&DataKey::OracleId)
-            .unwrap();
+            .expect("oracle not initialized");
         let oracle = MockOracleClient::new(&env, &oracle_id);
         let price = oracle.get_price();
         let last_updated: u64 = oracle.last_updated();

@@ -25,7 +25,7 @@ pub mod secure;
 /// In production this would be an ed25519 signature; using a hash keeps the
 /// test environment simple while still demonstrating the replay pattern.
 pub fn verify_signature(env: &Env, payload: &Bytes, signature: &BytesN<32>) {
-    let expected = env.crypto().sha256(payload);
+    let expected: BytesN<32> = env.crypto().sha256(payload).into();
     if expected != *signature {
         panic!("invalid signature");
     }
@@ -67,6 +67,7 @@ impl VulnerableSignedExecutor {
         execute_payload(&env, &payload);
     }
 
+    /// Returns how many times `payload` has been executed.
     pub fn exec_count(env: Env, payload: Bytes) -> u32 {
         env.storage()
             .persistent()
@@ -85,7 +86,7 @@ mod tests {
     use soroban_sdk::{Bytes, Env};
 
     fn make_sig(env: &Env, payload: &Bytes) -> BytesN<32> {
-        env.crypto().sha256(payload)
+        env.crypto().sha256(payload).into()
     }
 
     // --- Vulnerable contract tests ---

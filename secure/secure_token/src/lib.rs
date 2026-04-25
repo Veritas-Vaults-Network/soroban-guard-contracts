@@ -46,18 +46,20 @@ impl SecureToken {
             .persistent()
             .get(&DataKey::Balance(to.clone()))
             .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Balance(to.clone()), &bal.checked_add(amount).expect("overflow"));
+        env.storage().persistent().set(
+            &DataKey::Balance(to.clone()),
+            &bal.checked_add(amount).expect("overflow"),
+        );
 
         let supply: i128 = env
             .storage()
             .persistent()
             .get(&DataKey::TotalSupply)
             .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalSupply, &supply.checked_add(amount).expect("overflow"));
+        env.storage().persistent().set(
+            &DataKey::TotalSupply,
+            &supply.checked_add(amount).expect("overflow"),
+        );
 
         env.events().publish((symbol_short!("mint"),), (to, amount));
     }
@@ -83,11 +85,13 @@ impl SecureToken {
             .persistent()
             .get(&DataKey::TotalSupply)
             .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalSupply, &supply.checked_sub(amount).expect("supply underflow"));
+        env.storage().persistent().set(
+            &DataKey::TotalSupply,
+            &supply.checked_sub(amount).expect("supply underflow"),
+        );
 
-        env.events().publish((symbol_short!("burn"),), (from, amount));
+        env.events()
+            .publish((symbol_short!("burn"),), (from, amount));
     }
 
     /// Transfer `amount` from `from` to `to`. Requires `from` auth.
@@ -111,10 +115,15 @@ impl SecureToken {
         assert!(new_from >= 0, "insufficient balance");
         let new_to = to_bal.checked_add(amount).expect("overflow");
 
-        env.storage().persistent().set(&DataKey::Balance(from.clone()), &new_from);
-        env.storage().persistent().set(&DataKey::Balance(to.clone()), &new_to);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Balance(from.clone()), &new_from);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Balance(to.clone()), &new_to);
 
-        env.events().publish((symbol_short!("transfer"),), (from, to, amount));
+        env.events()
+            .publish((symbol_short!("transfer"),), (from, to, amount));
     }
 
     pub fn balance(env: Env, account: Address) -> i128 {
@@ -170,10 +179,18 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_non_admin_cannot_mint() {
-        let (env, _admin, client) = setup();
-        let attacker = Address::generate(&env);
-        // mock_all_auths not called for attacker — require_auth on admin will fail
-        client.mint(&attacker, &1000);
+        let env = Env::default();
+        let id = env.register_contract(None, SecureToken);
+        let client = SecureTokenClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin);
+        // Drop mock_all_auths scope — new env without mocked auth.
+        let env2 = Env::default();
+        let client2 = SecureTokenClient::new(&env2, &id);
+        let attacker = Address::generate(&env2);
+        // No mock_all_auths — require_auth on admin should fail.
+        client2.mint(&attacker, &1000);
     }
 
     #[test]

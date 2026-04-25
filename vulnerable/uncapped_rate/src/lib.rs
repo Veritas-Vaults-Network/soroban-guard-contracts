@@ -27,6 +27,7 @@ pub struct StakingContract;
 
 #[contractimpl]
 impl StakingContract {
+    /// Initialise the contract with an admin and initial reward rate.
     pub fn initialize(env: Env, admin: Address, reward_rate: u64) {
         env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage()
@@ -44,6 +45,7 @@ impl StakingContract {
             .set(&DataKey::RewardRate, &new_rate);
     }
 
+    /// Record a stake for `staker`. Requires staker auth.
     pub fn stake(env: Env, staker: Address, amount: u64) {
         staker.require_auth();
         env.storage()
@@ -54,6 +56,7 @@ impl StakingContract {
             .set(&DataKey::StakedAt(staker), &env.ledger().sequence());
     }
 
+    /// Compute and return rewards for `staker` since last claim. Resets the staked-at ledger.
     pub fn claim_rewards(env: Env, staker: Address) -> u64 {
         staker.require_auth();
 
@@ -87,6 +90,7 @@ impl StakingContract {
         reward
     }
 
+    /// Returns the staked amount for `staker`, defaulting to 0.
     pub fn staked_amount(env: Env, staker: Address) -> u64 {
         env.storage()
             .persistent()
@@ -94,6 +98,7 @@ impl StakingContract {
             .unwrap_or(0)
     }
 
+    /// Returns the current reward rate.
     pub fn current_rate(env: Env) -> u64 {
         env.storage()
             .persistent()
@@ -106,7 +111,7 @@ impl StakingContract {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap();
+            .expect("admin not initialized");
         admin.require_auth();
     }
 }

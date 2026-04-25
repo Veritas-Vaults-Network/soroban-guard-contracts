@@ -22,12 +22,16 @@ pub struct UnprotectedMintToken;
 
 #[contractimpl]
 impl UnprotectedMintToken {
+    /// Initialise the token with an admin address.
     pub fn initialize(env: Env, admin: Address) {
         env.storage().persistent().set(&DataKey::Admin, &admin);
     }
 
-    /// VULNERABLE: Mints `amount` tokens to `to` without verifying the caller
-    /// is the admin. No `admin.require_auth()` call — anyone can inflate supply.
+    /// VULNERABLE: mints `amount` tokens to `to` without verifying the caller is the admin.
+    /// Any account can inflate the token supply arbitrarily.
+    ///
+    /// # Vulnerability
+    /// Missing `admin.require_auth()`. Impact: unlimited supply inflation by any caller.
     pub fn mint(env: Env, to: Address, amount: i128) {
         // ❌ Missing: let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         //             admin.require_auth();
@@ -36,10 +40,10 @@ impl UnprotectedMintToken {
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         env.storage().persistent().set(&key, &(current + amount));
 
-        env.events()
-            .publish((symbol_short!("mint"),), (to, amount));
+        env.events().publish((symbol_short!("mint"),), (to, amount));
     }
 
+    /// Returns the balance of `account`, defaulting to 0.
     pub fn balance(env: Env, account: Address) -> i128 {
         env.storage()
             .persistent()
@@ -55,6 +59,7 @@ pub struct SecureMintToken;
 
 #[contractimpl]
 impl SecureMintToken {
+    /// Initialise the secure token with an admin address.
     pub fn initialize(env: Env, admin: Address) {
         env.storage().persistent().set(&DataKey::Admin, &admin);
     }
@@ -65,7 +70,7 @@ impl SecureMintToken {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap();
+            .expect("admin not initialized");
         // ✅ Admin must sign this transaction
         admin.require_auth();
 
@@ -77,6 +82,7 @@ impl SecureMintToken {
             .publish((symbol_short!("mint"),), (to, amount));
     }
 
+    /// Returns the balance of `account` in the secure token, defaulting to 0.
     pub fn balance(env: Env, account: Address) -> i128 {
         env.storage()
             .persistent()
@@ -151,9 +157,9 @@ mod tests {
     fn test_secure_admin_can_mint() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, SecureMintToken);
+        let contract_id = env.register_contract(None, secure::SecureMintToken);
         let admin = Address::generate(&env);
-        let client = SecureMintTokenClient::new(&env, &contract_id);
+        let client = secure::SecureMintTokenClient::new(&env, &contract_id);
 
         client.initialize(&admin);
         client.mint(&admin, &500);
@@ -165,10 +171,10 @@ mod tests {
     fn test_secure_attacker_cannot_mint() {
         let env = Env::default();
         // No mock_all_auths — auth failures will panic.
-        let contract_id = env.register_contract(None, SecureMintToken);
+        let contract_id = env.register_contract(None, secure::SecureMintToken);
         let admin = Address::generate(&env);
         let attacker = Address::generate(&env);
-        let client = SecureMintTokenClient::new(&env, &contract_id);
+        let client = secure::SecureMintTokenClient::new(&env, &contract_id);
 
         client.initialize(&admin);
         // ✅ This panics because attacker is not the admin.
