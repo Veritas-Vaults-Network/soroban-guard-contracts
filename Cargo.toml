@@ -21,6 +21,7 @@ members = [
     "vulnerable/reentrancy",
     "vulnerable/reinit_attack",
     "vulnerable/scanner_impersonation",
+    "vulnerable/self_stake",
     "vulnerable/self_transfer",
     "vulnerable/sensitive_storage",
     "vulnerable/string_admin",
