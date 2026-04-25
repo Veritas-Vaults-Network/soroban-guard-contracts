@@ -99,9 +99,24 @@ impl ScanRegistry {
     /// Emits `("scanner", "added", scanner)`.
     pub fn add_scanner(env: Env, scanner: Address) {
         Self::require_admin(&env);
+        let already: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Scanner(scanner.clone()))
+            .unwrap_or(false);
         env.storage()
             .persistent()
             .set(&DataKey::Scanner(scanner.clone()), &true);
+        if !already {
+            let count: u32 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ScannerCount)
+                .unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&DataKey::ScannerCount, &(count + 1));
+        }
         env.events()
             .publish((symbol_short!("scanner"), symbol_short!("added")), scanner);
     }
@@ -118,9 +133,24 @@ impl ScanRegistry {
     /// Emits `("scanner", "removed", scanner)`.
     pub fn remove_scanner(env: Env, scanner: Address) {
         Self::require_admin(&env);
+        let was_active: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Scanner(scanner.clone()))
+            .unwrap_or(false);
         env.storage()
             .persistent()
             .set(&DataKey::Scanner(scanner.clone()), &false);
+        if was_active {
+            let count: u32 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ScannerCount)
+                .unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&DataKey::ScannerCount, &count.saturating_sub(1));
+        }
         env.events()
             .publish((symbol_short!("scanner"), symbol_short!("removed")), scanner);
     }
@@ -165,6 +195,16 @@ impl ScanRegistry {
             .unwrap_or(false);
         if !approved {
             panic!("not a verified scanner");
+        }
+
+        // 3. The target contract must not be deactivated.
+        let active: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ContractActive(contract_address.clone()))
+            .unwrap_or(true);
+        if !active {
+            panic!("contract is deactivated");
         }
 
         // Keep a copy for the score key before scanner is moved into ScanResult.
