@@ -1,5 +1,5 @@
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env};
 use super::{get_balance, set_balance};
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env};
 
 #[contract]
 pub struct SecureTokenContract;

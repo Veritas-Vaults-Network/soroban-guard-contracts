@@ -4,8 +4,8 @@
 //! execution the nonce is marked as used; any replay panics immediately.
 
 #![no_std]
+use super::{execute_payload, verify_signature, DataKey};
 use soroban_sdk::{contract, contractimpl, Bytes, BytesN, Env};
-use super::{DataKey, execute_payload, verify_signature};
 
 #[contract]
 pub struct SecureSignedExecutor;
@@ -19,7 +19,12 @@ impl SecureSignedExecutor {
 
         // ✅ Reject replays: the signature hash serves as the nonce.
         let nonce_key = DataKey::NonceUsed(signature.clone());
-        if env.storage().persistent().get::<_, bool>(&nonce_key).unwrap_or(false) {
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&nonce_key)
+            .unwrap_or(false)
+        {
             panic!("already used");
         }
         env.storage().persistent().set(&nonce_key, &true);

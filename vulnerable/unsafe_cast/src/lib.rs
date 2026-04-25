@@ -38,7 +38,7 @@ pub struct RewardContract;
 
 #[contractimpl]
 impl RewardContract {
-    /// Deposit an amount (stored as i128).
+    /// Deposit `amount` (stored as i128) for `staker`. Requires staker auth.
     pub fn deposit(env: Env, staker: Address, amount: i128) {
         staker.require_auth();
         let current = get_balance(&env, &staker);
@@ -56,7 +56,7 @@ impl RewardContract {
         balance as u64
     }
 
-    /// Returns the raw i128 balance for inspection in tests.
+    /// Returns the raw i128 balance for `staker` without any cast.
     pub fn get_balance_raw(env: Env, staker: Address) -> i128 {
         get_balance(&env, &staker)
     }
