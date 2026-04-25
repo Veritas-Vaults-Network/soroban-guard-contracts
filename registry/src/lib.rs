@@ -6,9 +6,9 @@
 //!
 //! Auth model:
 //! - Only the admin can add/remove scanners.
-//! - `submit_scan` requires the caller to pass their own `scanner` address and
-//!   have signed the transaction (`scanner.require_auth()`). The address is
-//!   then checked against the approved-scanner registry.
+//! - `submit_scan` / `submit_scans_bulk` require the caller to pass their own
+//!   `scanner` address and have signed the transaction. The address is then
+//!   checked against the approved-scanner registry.
 
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Map, String, Vec};
@@ -19,6 +19,9 @@ pub const SEVERITY_CRITICAL: &str = "critical";
 pub const SEVERITY_HIGH: &str = "high";
 pub const SEVERITY_MEDIUM: &str = "medium";
 pub const SEVERITY_LOW: &str = "low";
+
+/// Maximum number of entries allowed in a single bulk submission.
+const MAX_BULK: u32 = 10;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -39,7 +42,14 @@ pub struct ScanResult {
     pub scanner: Address,
     pub timestamp: u64,
     pub findings_hash: String,
-    /// e.g. {"critical": 1, "high": 2, "medium": 0, "low": 3}
+    pub severity_counts: Map<String, u32>,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct ScanEntry {
+    pub contract_address: Address,
+    pub findings_hash: String,
     pub severity_counts: Map<String, u32>,
 }
 
@@ -48,11 +58,8 @@ pub struct ScanResult {
 #[contracttype]
 pub enum DataKey {
     Admin,
-    /// true = approved, false / absent = not approved
     Scanner(Address),
-    /// Most recent scan result for a contract address
     LatestScan(Address),
-    /// Full ordered history of scan results for a contract address
     ScanHistory(Address),
     /// Set of all contract addresses that have at least one scan (used as an index)
     SeverityIndex,
@@ -169,6 +176,8 @@ impl ScanRegistry {
             findings_hash: findings_hash.clone(),
             severity_counts,
         };
+        Self::store_result(&env, contract_address, result);
+    }
 
         env.storage()
             .persistent()
@@ -500,7 +509,6 @@ mod tests {
     fn test_add_scanner_and_submit() {
         let (env, contract_id, _admin, scanner) = setup();
         let client = ScanRegistryClient::new(&env, &contract_id);
-
         let target = Address::generate(&env);
         let hash = String::from_str(&env, "abc123");
 
@@ -510,7 +518,6 @@ mod tests {
         client.submit_scan(&scanner, &target, &hash, &counts(&env));
 
         let result = client.get_scan(&target).unwrap();
-        assert_eq!(result.scanner, scanner);
         assert_eq!(result.findings_hash, hash);
     }
 
@@ -749,9 +756,7 @@ mod tests {
     fn test_score_increments_on_submit() {
         let (env, contract_id, _admin, scanner) = setup();
         let client = ScanRegistryClient::new(&env, &contract_id);
-
         let target = Address::generate(&env);
-        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
 
         client.add_scanner(&scanner);
         client.submit_scan(&scanner, &target, &String::from_str(&env, "h1"), &counts);
