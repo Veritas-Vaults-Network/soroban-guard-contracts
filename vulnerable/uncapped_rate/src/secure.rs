@@ -86,7 +86,7 @@ impl SecureStakingContract {
             .storage()
             .persistent()
             .get(&DataKey::Admin)
-            .unwrap();
+            .expect("admin not initialized");
         admin.require_auth();
     }
 }

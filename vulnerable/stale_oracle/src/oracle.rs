@@ -26,7 +26,7 @@ impl MockOracle {
             .storage()
             .persistent()
             .get(&OracleDataKey::Admin)
-            .unwrap();
+            .expect("admin not initialized");
         admin.require_auth();
         env.storage().persistent().set(&OracleDataKey::Price, &price);
         let now = env.ledger().timestamp();

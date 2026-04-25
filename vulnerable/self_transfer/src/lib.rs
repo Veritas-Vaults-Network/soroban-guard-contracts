@@ -36,7 +36,7 @@ pub struct VulnerableToken;
 impl VulnerableToken {
     pub fn mint(env: Env, to: Address, amount: i128) {
         let current = get_balance(&env, &to);
-        set_balance(&env, &to, current.checked_add(amount).unwrap());
+        set_balance(&env, &to, current.checked_add(amount).expect("mint overflow"));
     }
 
     pub fn balance(env: Env, account: Address) -> i128 {
@@ -48,8 +48,8 @@ impl VulnerableToken {
         // ❌ No from != to check — self-transfer corrupts balance
         let from_balance = get_balance(&env, &from);
         let to_balance = get_balance(&env, &to); // same slot as from_balance when from == to
-        set_balance(&env, &from, from_balance.checked_sub(amount).unwrap());
-        set_balance(&env, &to, to_balance.checked_add(amount).unwrap()); // overwrites the subtraction
+        set_balance(&env, &from, from_balance.checked_sub(amount).expect("transfer underflow"));
+        set_balance(&env, &to, to_balance.checked_add(amount).expect("transfer overflow")); // overwrites the subtraction
     }
 }
 

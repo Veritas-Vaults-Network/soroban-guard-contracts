@@ -33,7 +33,7 @@ pub struct SecureBurnToken;
 impl SecureBurnToken {
     pub fn mint(env: Env, to: Address, amount: i128) {
         let current = get_balance(&env, &to);
-        set_balance(&env, &to, current.checked_add(amount).unwrap());
+        set_balance(&env, &to, current.checked_add(amount).expect("mint overflow"));
         env.events()
             .publish((symbol_short!("mint"),), (to, amount));
     }
@@ -45,7 +45,7 @@ impl SecureBurnToken {
         account.require_auth();
 
         let balance = get_balance(&env, &account);
-        set_balance(&env, &account, balance.checked_sub(amount).unwrap());
+        set_balance(&env, &account, balance.checked_sub(amount).expect("burn underflow"));
 
         env.events()
             .publish((symbol_short!("burn"),), (account, amount));

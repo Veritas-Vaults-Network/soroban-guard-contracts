@@ -297,7 +297,7 @@ impl ScanRegistry {
         let end = (start + page_size).min(total);
         let mut page_results: Vec<ScanResult> = Vec::new(&env);
         for i in start..end {
-            page_results.push_back(history.get(i).unwrap());
+            page_results.push_back(history.get(i).expect("history index out of bounds"));
         }
         page_results
     }
