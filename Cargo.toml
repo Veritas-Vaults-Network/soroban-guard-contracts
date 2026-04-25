@@ -50,6 +50,7 @@ members = [
     "vulnerable/unsafe_cast",
     "secure/secure_vault",
     "secure/protected_admin",
+    "secure/secure_airdrop",
     "secure/protected_fee_withdraw",
     "secure/secure_burn",
     "secure/secure_token",
