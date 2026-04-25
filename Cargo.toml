@@ -32,6 +32,7 @@ members = [
     "vulnerable/unchecked_kyc_level",
     "vulnerable/unchecked_math",
     "vulnerable/uncapped_rate",
+    "vulnerable/fee_on_transfer",
     "vulnerable/instant_oracle",
     "vulnerable/stale_oracle",
     "vulnerable/unprotected_admin",
