@@ -29,6 +29,10 @@ pub struct ScanResult {
 #[contracttype]
 pub enum DataKey {
     Admin,
+    /// Proposed next admin (2-step transfer)
+    PendingAdmin,
+    /// Total number of approved scanners
+    ScannerCount,
     /// true = approved, false / absent = not approved
     Scanner(Address),
     /// Most recent scan result for a contract address
@@ -37,6 +41,8 @@ pub enum DataKey {
     ScanHistory(Address),
     /// Reputation score for a scanner address (i32, default 0)
     ScannerScore(Address),
+    /// false = deactivated; absent = active (default true)
+    ContractActive(Address),
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -73,9 +79,24 @@ impl ScanRegistry {
     /// Emits `("scanner", "added", scanner)`.
     pub fn add_scanner(env: Env, scanner: Address) {
         Self::require_admin(&env);
+        let already: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Scanner(scanner.clone()))
+            .unwrap_or(false);
         env.storage()
             .persistent()
             .set(&DataKey::Scanner(scanner.clone()), &true);
+        if !already {
+            let count: u32 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ScannerCount)
+                .unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&DataKey::ScannerCount, &(count + 1));
+        }
         env.events()
             .publish((symbol_short!("scanner"), symbol_short!("added")), scanner);
     }
@@ -92,9 +113,24 @@ impl ScanRegistry {
     /// Emits `("scanner", "removed", scanner)`.
     pub fn remove_scanner(env: Env, scanner: Address) {
         Self::require_admin(&env);
+        let was_active: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Scanner(scanner.clone()))
+            .unwrap_or(false);
         env.storage()
             .persistent()
             .set(&DataKey::Scanner(scanner.clone()), &false);
+        if was_active {
+            let count: u32 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::ScannerCount)
+                .unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&DataKey::ScannerCount, &count.saturating_sub(1));
+        }
         env.events()
             .publish((symbol_short!("scanner"), symbol_short!("removed")), scanner);
     }
@@ -141,6 +177,16 @@ impl ScanRegistry {
             .unwrap_or(false);
         if !approved {
             panic!("not a verified scanner");
+        }
+
+        // 3. The target contract must not be deactivated.
+        let active: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ContractActive(contract_address.clone()))
+            .unwrap_or(true);
+        if !active {
+            panic!("contract is deactivated");
         }
 
         // Keep a copy for the score key before scanner is moved into ScanResult.
@@ -314,6 +360,73 @@ impl ScanRegistry {
             .persistent()
             .get(&DataKey::Admin)
             .expect("not initialized")
+    }
+
+    // ── Scanner count ─────────────────────────────────────────────────────────
+
+    /// Return the total number of currently approved scanners.
+    pub fn get_scanner_count(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ScannerCount)
+            .unwrap_or(0)
+    }
+
+    // ── 2-step admin transfer ─────────────────────────────────────────────────
+
+    /// Propose a new admin. Only the current admin may call this.
+    /// The proposed admin must call `accept_admin` to finalise the transfer.
+    pub fn propose_admin(env: Env, new_admin: Address) {
+        Self::require_admin(&env);
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingAdmin, &new_admin);
+    }
+
+    /// Accept the pending admin role. Only the pending admin may call this.
+    ///
+    /// # Events
+    /// Emits `("AdminXfr", new_admin)`.
+    pub fn accept_admin(env: Env) {
+        let pending: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingAdmin)
+            .expect("no pending admin");
+        pending.require_auth();
+        env.storage()
+            .persistent()
+            .set(&DataKey::Admin, &pending);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PendingAdmin);
+        env.events()
+            .publish((symbol_short!("AdminXfr"),), (pending,));
+    }
+
+    // ── Contract lifecycle ────────────────────────────────────────────────────
+
+    /// Deactivate a contract so it can no longer receive new scan submissions.
+    /// Admin only.
+    ///
+    /// # Events
+    /// Emits `("Deactivate", contract)`.
+    pub fn deactivate_contract(env: Env, contract: Address) {
+        Self::require_admin(&env);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractActive(contract.clone()), &false);
+        env.events()
+            .publish((symbol_short!("Deactivate"),), (contract,));
+    }
+
+    /// Return whether a contract is active (i.e. not deactivated).
+    /// Contracts are active by default.
+    pub fn is_active(env: Env, contract: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ContractActive(contract))
+            .unwrap_or(true)
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
@@ -567,5 +680,136 @@ mod tests {
 
         // admin.require_auth() inside dispute_scan is not satisfied → panic.
         ScanRegistryClient::new(&env, &contract_id).dispute_scan(&scanner);
+    }
+
+    // ── Scanner count tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_scanner_count_starts_at_zero() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        assert_eq!(client.get_scanner_count(), 0);
+    }
+
+    #[test]
+    fn test_scanner_count_increments() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let s1 = Address::generate(&env);
+        let s2 = Address::generate(&env);
+        let s3 = Address::generate(&env);
+
+        client.add_scanner(&s1);
+        assert_eq!(client.get_scanner_count(), 1);
+        client.add_scanner(&s2);
+        assert_eq!(client.get_scanner_count(), 2);
+        client.add_scanner(&s3);
+        assert_eq!(client.get_scanner_count(), 3);
+    }
+
+    #[test]
+    fn test_scanner_count_decrements_on_remove() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let s1 = Address::generate(&env);
+        let s2 = Address::generate(&env);
+
+        client.add_scanner(&s1);
+        client.add_scanner(&s2);
+        assert_eq!(client.get_scanner_count(), 2);
+
+        client.remove_scanner(&s1);
+        assert_eq!(client.get_scanner_count(), 1);
+    }
+
+    // ── 2-step admin transfer tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_propose_and_accept_admin() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+
+        let new_admin = Address::generate(&env);
+        client.propose_admin(&new_admin);
+        // pending admin accepts
+        client.accept_admin();
+        assert_eq!(client.get_admin(), new_admin);
+    }
+
+    #[test]
+    #[should_panic(expected = "no pending admin")]
+    fn test_accept_admin_without_proposal_panics() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        client.accept_admin();
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_non_pending_cannot_accept_admin() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ScanRegistry);
+        let admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+
+        env.mock_all_auths();
+        ScanRegistryClient::new(&env, &contract_id).initialize(&admin);
+        ScanRegistryClient::new(&env, &contract_id).propose_admin(&new_admin);
+
+        // Clear all mocks — pending admin's auth is not satisfied → panic.
+        env.mock_auths(&[]);
+        ScanRegistryClient::new(&env, &contract_id).accept_admin();
+    }
+
+    // ── Contract deactivation tests ───────────────────────────────────────────
+
+    #[test]
+    fn test_new_contract_is_active() {
+        let (env, contract_id, _admin, _scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+        assert!(client.is_active(&target));
+    }
+
+    #[test]
+    fn test_deactivate_contract() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+
+        client.add_scanner(&scanner);
+        client.deactivate_contract(&target);
+        assert!(!client.is_active(&target));
+    }
+
+    #[test]
+    #[should_panic(expected = "contract is deactivated")]
+    fn test_submit_scan_rejected_for_deactivated_contract() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+        let counts: Map<String, u32> = map![&env, (String::from_str(&env, "low"), 0u32)];
+
+        client.add_scanner(&scanner);
+        client.deactivate_contract(&target);
+        client.submit_scan(&scanner, &target, &String::from_str(&env, "hash"), &counts);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_only_admin_can_deactivate() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, ScanRegistry);
+        let admin = Address::generate(&env);
+        let non_admin = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        env.mock_all_auths();
+        ScanRegistryClient::new(&env, &contract_id).initialize(&admin);
+
+        env.mock_auths(&[]);
+        ScanRegistryClient::new(&env, &contract_id).deactivate_contract(&target);
     }
 }

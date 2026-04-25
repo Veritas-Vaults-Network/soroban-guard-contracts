@@ -53,6 +53,7 @@ members = [
     "secure/protected_fee_withdraw",
     "secure/secure_burn",
     "secure/secure_token",
+    "secure/secure_dao",
     "registry",
 ]
 
