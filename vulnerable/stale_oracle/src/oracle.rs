@@ -18,7 +18,9 @@ impl MockOracle {
         if env.storage().persistent().has(&OracleDataKey::Admin) {
             panic!("already initialized");
         }
-        env.storage().persistent().set(&OracleDataKey::Admin, &admin);
+        env.storage()
+            .persistent()
+            .set(&OracleDataKey::Admin, &admin);
     }
 
     pub fn set_price(env: Env, price: i128) {
@@ -26,9 +28,11 @@ impl MockOracle {
             .storage()
             .persistent()
             .get(&OracleDataKey::Admin)
-            .unwrap();
+            .expect("admin not initialized");
         admin.require_auth();
-        env.storage().persistent().set(&OracleDataKey::Price, &price);
+        env.storage()
+            .persistent()
+            .set(&OracleDataKey::Price, &price);
         let now = env.ledger().timestamp();
         env.storage()
             .persistent()

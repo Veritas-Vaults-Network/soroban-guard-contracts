@@ -35,6 +35,7 @@ pub struct TokenContract;
 
 #[contractimpl]
 impl TokenContract {
+    /// Mint `amount` tokens to `to`. No auth check — for test setup.
     pub fn mint(env: Env, to: Address, amount: i128) {
         set_balance(&env, &to, get_balance(&env, &to) + amount);
     }
@@ -50,6 +51,7 @@ impl TokenContract {
             .publish((symbol_short!("transfer"),), (from, to, amount));
     }
 
+    /// Returns the balance of `account`, defaulting to 0.
     pub fn balance(env: Env, account: Address) -> i128 {
         get_balance(&env, &account)
     }
@@ -95,7 +97,7 @@ mod tests {
         client.transfer(&alice, &bob, &-200);
 
         assert_eq!(client.balance(&alice), 700); // gained 200
-        assert_eq!(client.balance(&bob), 300);   // lost 200
+        assert_eq!(client.balance(&bob), 300); // lost 200
     }
 
     #[test]

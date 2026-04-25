@@ -8,7 +8,7 @@
 //! VULNERABILITY: Unbounded `Vec` growth in persistent storage — no length cap.
 
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, String, Vec, Env};
+use soroban_sdk::{contract, contractimpl, contracttype, Env, String, Vec};
 
 #[contracttype]
 pub enum DataKey {
@@ -22,9 +22,11 @@ pub struct UnboundedStorage;
 
 #[contractimpl]
 impl UnboundedStorage {
-    /// VULNERABLE: Appends `item` to the list with no length cap.
-    /// Repeated calls grow the Vec indefinitely, increasing read/write cost
-    /// proportionally until the contract becomes unusable.
+    /// VULNERABLE: appends `item` to the list with no length cap.
+    /// Repeated calls grow the Vec indefinitely, increasing read/write cost until the contract is unusable.
+    ///
+    /// # Vulnerability
+    /// No length cap on Vec growth. Impact: DoS — contract becomes too expensive to call.
     pub fn append(env: Env, item: String) {
         let key = DataKey::List;
         let mut list: Vec<String> = env
@@ -37,6 +39,7 @@ impl UnboundedStorage {
         env.storage().persistent().set(&key, &list);
     }
 
+    /// Returns the full list of stored items.
     pub fn list(env: Env) -> Vec<String> {
         env.storage()
             .persistent()
@@ -44,6 +47,7 @@ impl UnboundedStorage {
             .unwrap_or(Vec::new(&env))
     }
 
+    /// Returns the number of items currently stored.
     pub fn len(env: Env) -> u32 {
         env.storage()
             .persistent()
@@ -55,43 +59,48 @@ impl UnboundedStorage {
 
 // ── Secure mirror ─────────────────────────────────────────────────────────────
 
-const MAX_HISTORY: u32 = 50;
+pub mod secure {
+    use super::DataKey;
+    use soroban_sdk::{contract, contractimpl, Env, String, Vec};
 
-#[contract]
-pub struct BoundedStorage;
+    pub const MAX_HISTORY: u32 = 50;
 
-#[contractimpl]
-impl BoundedStorage {
-    /// SECURE: Enforces MAX_HISTORY cap using a ring-buffer eviction strategy.
-    /// When the list is full the oldest entry is dropped before appending.
-    pub fn append(env: Env, item: String) {
-        let key = DataKey::List;
-        let mut list: Vec<String> = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or(Vec::new(&env));
-        // ✅ Evict oldest entry when cap is reached
-        if list.len() >= MAX_HISTORY {
-            list.remove(0);
+    #[contract]
+    pub struct BoundedStorage;
+
+    #[contractimpl]
+    impl BoundedStorage {
+        /// SECURE: Enforces MAX_HISTORY cap using a ring-buffer eviction strategy.
+        /// When the list is full the oldest entry is dropped before appending.
+        pub fn append(env: Env, item: String) {
+            let key = DataKey::List;
+            let mut list: Vec<String> = env
+                .storage()
+                .persistent()
+                .get(&key)
+                .unwrap_or(Vec::new(&env));
+            // ✅ Evict oldest entry when cap is reached
+            if list.len() >= MAX_HISTORY {
+                list.remove(0);
+            }
+            list.push_back(item);
+            env.storage().persistent().set(&key, &list);
         }
-        list.push_back(item);
-        env.storage().persistent().set(&key, &list);
-    }
 
-    pub fn list(env: Env) -> Vec<String> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::List)
-            .unwrap_or(Vec::new(&env))
-    }
+        pub fn list(env: Env) -> Vec<String> {
+            env.storage()
+                .persistent()
+                .get(&DataKey::List)
+                .unwrap_or(Vec::new(&env))
+        }
 
-    pub fn len(env: Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get::<DataKey, Vec<String>>(&DataKey::List)
-            .map(|v| v.len())
-            .unwrap_or(0)
+        pub fn len(env: Env) -> u32 {
+            env.storage()
+                .persistent()
+                .get::<DataKey, Vec<String>>(&DataKey::List)
+                .map(|v| v.len())
+                .unwrap_or(0)
+        }
     }
 }
 
@@ -148,15 +157,15 @@ mod tests {
     fn test_secure_enforces_max_history_cap() {
         let env = Env::default();
         env.budget().reset_unlimited();
-        let id = env.register_contract(None, BoundedStorage);
-        let client = BoundedStorageClient::new(&env, &id);
+        let id = env.register_contract(None, secure::BoundedStorage);
+        let client = secure::BoundedStorageClient::new(&env, &id);
 
         // Append more entries than MAX_HISTORY
-        for _ in 0..(MAX_HISTORY + 20) {
+        for _ in 0..(secure::MAX_HISTORY + 20) {
             client.append(&String::from_str(&env, "item"));
         }
 
         // ✅ Length is capped at MAX_HISTORY regardless of how many were appended
-        assert_eq!(client.len(), MAX_HISTORY);
+        assert_eq!(client.len(), secure::MAX_HISTORY);
     }
 }
