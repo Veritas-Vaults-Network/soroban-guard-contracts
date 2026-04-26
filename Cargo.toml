@@ -67,7 +67,7 @@ members = [
     "registry",
     "vulnerable/expired_delegation",
     "vulnerable/uncapped_supply",
-    "vulnerable/zero_stake_amount",
+    "vulnerable/silent_admin_change",
 ]
 
 [workspace.dependencies]
