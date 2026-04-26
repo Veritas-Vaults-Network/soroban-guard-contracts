@@ -29,6 +29,7 @@ members = [
     "vulnerable/self_transfer",
     "vulnerable/sensitive_storage",
     "vulnerable/string_admin",
+    "vulnerable/timelock_sequence",
     "vulnerable/timestamp_lock",
     "vulnerable/unchecked_kyc_level",
     "vulnerable/unchecked_math",
