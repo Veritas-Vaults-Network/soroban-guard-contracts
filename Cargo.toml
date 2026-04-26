@@ -38,6 +38,7 @@ members = [
     "vulnerable/instant_oracle",
     "vulnerable/stale_oracle",
     "vulnerable/unprotected_admin",
+    "vulnerable/unprotected_upgrade",
     "vulnerable/unprotected_burn",
     "vulnerable/unprotected_delete",
     "vulnerable/unprotected_emergency_withdraw",
