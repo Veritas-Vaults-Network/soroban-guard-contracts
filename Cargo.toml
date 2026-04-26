@@ -20,6 +20,7 @@ members = [
     "vulnerable/missing_events",
     "vulnerable/missing_ttl",
     "vulnerable/negative_transfer",
+    "vulnerable/near_overflow_input",
     "vulnerable/no_slippage",
     "vulnerable/reentrancy",
     "vulnerable/reinit_attack",
@@ -28,6 +29,7 @@ members = [
     "vulnerable/self_transfer",
     "vulnerable/sensitive_storage",
     "vulnerable/string_admin",
+    "vulnerable/timelock_sequence",
     "vulnerable/timestamp_lock",
     "vulnerable/unchecked_kyc_level",
     "vulnerable/unchecked_math",
@@ -60,6 +62,8 @@ members = [
     "secure/secure_escrow",
     "secure/protected_admin",
     "secure/secure_airdrop",
+    "secure/secure_lending",
+    "secure/secure_vesting",
     "secure/protected_fee_withdraw",
     "secure/secure_burn",
     "secure/secure_token",
@@ -67,7 +71,7 @@ members = [
     "registry",
     "vulnerable/expired_delegation",
     "vulnerable/uncapped_supply",
-    "vulnerable/asset_key_collision",
+    "vulnerable/silent_admin_change",
 ]
 
 [workspace.dependencies]

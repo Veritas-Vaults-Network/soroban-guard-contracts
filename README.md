@@ -105,7 +105,8 @@ Supports full scan history per contract.
 ```
 submit_scan(scanner, contract_address, findings_hash, severity_counts)
 get_scan(contract_address) -> Option<ScanResult>
-get_history(contract_address) -> Vec<ScanResult>
+get_history_page(contract_address, offset, limit) -> Vec<ScanResult>  // limit capped at 50
+get_history_len(contract_address) -> u32
 ```
 
 ---
@@ -236,12 +237,14 @@ stellar contract invoke \
   -- get_scan \
   --contract_address <scanned-contract-address>
 
-# Full history
+# History page (offset=0, limit=50)
 stellar contract invoke \
   --id $REGISTRY_ID \
   --network testnet \
-  -- get_history \
-  --contract_address <scanned-contract-address>
+  -- get_history_page \
+  --contract_address <scanned-contract-address> \
+  --offset 0 \
+  --limit 50
 ```
 
 ### 8. Deploy a vulnerable contract (for scanner testing)
@@ -292,7 +295,7 @@ flowchart TD
             S2[protected_admin]
         end
 
-        REG["registry\nsubmit_scan()\nget_scan()\nget_history()"]
+        REG["registry\nsubmit_scan()\nget_scan()\nget_history_page()"]
     end
 
     CLI["soroban-guard-core\n(off-chain scanner CLI)"]

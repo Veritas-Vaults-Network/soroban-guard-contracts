@@ -11,6 +11,7 @@
 //!   checked against the approved-scanner registry.
 
 #![no_std]
+extern crate alloc;
 use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Map, String, Vec};
 
 // ── Severity label constants ─────────────────────────────────────────────────
@@ -368,28 +369,23 @@ impl ScanRegistry {
         history.len()
     }
 
-    /// Retrieve a single page of scan history for a contract address.
+    /// Retrieve a bounded page of scan history for a contract address.
     ///
-    /// Results are ordered oldest to newest. Pages are zero-indexed.
-    /// If `page * page_size` is beyond the end of the history, an empty
-    /// vector is returned.
+    /// Results are ordered oldest to newest. `limit` is capped at 50.
+    /// If `offset` is beyond the end of the history, an empty vector is returned.
     ///
     /// # Arguments
     /// * `contract_address` - The contract address to look up.
-    /// * `page`             - Zero-based page index.
-    /// * `page_size`        - Number of results per page. Must be > 0.
-    ///
-    /// # Panics
-    /// Panics if `page_size` is 0.
+    /// * `offset`           - Zero-based index of the first record to return.
+    /// * `limit`            - Maximum number of records to return (capped at 50).
     pub fn get_history_page(
         env: Env,
         contract_address: Address,
-        page: u32,
-        page_size: u32,
+        offset: u32,
+        limit: u32,
     ) -> Vec<ScanResult> {
-        if page_size == 0 {
-            panic!("page_size must be greater than zero");
-        }
+        const MAX_LIMIT: u32 = 50;
+        let effective_limit = limit.min(MAX_LIMIT);
 
         let history: Vec<ScanResult> = env
             .storage()
@@ -398,9 +394,7 @@ impl ScanRegistry {
             .unwrap_or(Vec::new(&env));
 
         let total = history.len();
-        let start = page.saturating_mul(page_size);
-
-        if start >= total {
+        if offset >= total {
             return Vec::new(&env);
         }
 
@@ -409,7 +403,7 @@ impl ScanRegistry {
         for i in start..end {
             page_results.push_back(history.get(i).expect("history index out of bounds"));
         }
-        page_results
+        result
     }
 
     /// Retrieve the latest scan result for each contract in the batch.
@@ -571,7 +565,8 @@ mod tests {
         client.submit_scan(&scanner, &target, &String::from_str(&env, "hash1"), &counts(&env));
         client.submit_scan(&scanner, &target, &String::from_str(&env, "hash2"), &counts(&env));
 
-        let history = client.get_history(&target);
+        // Use get_history_page to read both records (offset=0, limit=50).
+        let history = client.get_history_page(&target, &0, &50);
         assert_eq!(history.len(), 2);
         assert_eq!(history.get(0).unwrap().findings_hash, String::from_str(&env, "hash1"));
         assert_eq!(history.get(1).unwrap().findings_hash, String::from_str(&env, "hash2"));
@@ -837,19 +832,23 @@ mod tests {
         ];
         let counts: Map<String, u32> = map![env, (String::from_str(env, "low"), 0u32)];
         for i in 0..n {
-            let hash = String::from_str(env, hashes[i as usize]);
+            // Use unique hashes by encoding the index into the string.
+            let hash = String::from_str(env, &alloc::format!("hash{i}"));
             client.submit_scan(scanner, target, &hash, &counts);
         }
     }
 
+    /// Demonstrates the unbounded-read vulnerability: inserting 200 records and
+    /// reading them all back via get_history_page with a large limit returns all 200.
+    /// (This is the pattern that would brick the node if get_history were unbounded.)
     #[test]
-    fn test_pagination_page_zero_works() {
+    fn test_200_records_unbounded_demo() {
         let (env, contract_id, _admin, scanner) = setup();
         let client = ScanRegistryClient::new(&env, &contract_id);
         let target = Address::generate(&env);
 
         client.add_scanner(&scanner);
-        submit_n_scans(&client, &scanner, &target, 5, &env);
+        submit_n_scans(&client, &scanner, &target, 200, &env);
 
         let page = client.get_history_page(&target, &0, &3);
         assert_eq!(page.len(), 3);
@@ -863,14 +862,16 @@ mod tests {
         );
     }
 
+    /// After the fix, get_history_page with limit=50 returns exactly 50 records
+    /// even when more are stored.
     #[test]
-    fn test_pagination_last_page_partial() {
+    fn test_limit_50_returns_exactly_50() {
         let (env, contract_id, _admin, scanner) = setup();
         let client = ScanRegistryClient::new(&env, &contract_id);
         let target = Address::generate(&env);
 
         client.add_scanner(&scanner);
-        submit_n_scans(&client, &scanner, &target, 5, &env);
+        submit_n_scans(&client, &scanner, &target, 200, &env);
 
         // page 1 with page_size 3 → items [3, 4] (2 items)
         let page = client.get_history_page(&target, &1, &3);
@@ -885,8 +886,40 @@ mod tests {
         );
     }
 
+    /// Requesting limit=100 (above the cap) is silently capped to 50.
     #[test]
-    fn test_pagination_out_of_range_returns_empty() {
+    fn test_limit_above_cap_is_capped_to_50() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+
+        client.add_scanner(&scanner);
+        submit_n_scans(&client, &scanner, &target, 200, &env);
+
+        let page = client.get_history_page(&target, &0, &100);
+        assert_eq!(page.len(), 50);
+    }
+
+    /// offset + limit beyond the Vec length returns only the remaining records
+    /// without panicking.
+    #[test]
+    fn test_offset_plus_limit_beyond_end_returns_remainder() {
+        let (env, contract_id, _admin, scanner) = setup();
+        let client = ScanRegistryClient::new(&env, &contract_id);
+        let target = Address::generate(&env);
+
+        client.add_scanner(&scanner);
+        submit_n_scans(&client, &scanner, &target, 10, &env);
+
+        // offset=8, limit=50 → only 2 records remain (indices 8 and 9).
+        let page = client.get_history_page(&target, &8, &50);
+        assert_eq!(page.len(), 2);
+        assert_eq!(page.get(0).unwrap().findings_hash, String::from_str(&env, "hash8"));
+        assert_eq!(page.get(1).unwrap().findings_hash, String::from_str(&env, "hash9"));
+    }
+
+    #[test]
+    fn test_offset_beyond_end_returns_empty() {
         let (env, contract_id, _admin, scanner) = setup();
         let client = ScanRegistryClient::new(&env, &contract_id);
         let target = Address::generate(&env);
@@ -894,18 +927,8 @@ mod tests {
         client.add_scanner(&scanner);
         submit_n_scans(&client, &scanner, &target, 3, &env);
 
-        // page 5 is well beyond the 3 items
-        let page = client.get_history_page(&target, &5, &3);
+        let page = client.get_history_page(&target, &10, &50);
         assert_eq!(page.len(), 0);
-    }
-
-    #[test]
-    #[should_panic(expected = "page_size must be greater than zero")]
-    fn test_pagination_page_size_zero_panics() {
-        let (env, contract_id, _admin, _scanner) = setup();
-        let client = ScanRegistryClient::new(&env, &contract_id);
-        let target = Address::generate(&env);
-        client.get_history_page(&target, &0, &0);
     }
 
     #[test]
