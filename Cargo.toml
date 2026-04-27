@@ -16,6 +16,7 @@ members = [
     "vulnerable/missing_auth",
     "vulnerable/unprotected_mint",
     "vulnerable/zero_admin",
+    "vulnerable/zero_reward_rate",
     "vulnerable/missing_escrow_auth",
     "vulnerable/missing_events",
     "vulnerable/missing_ttl",
