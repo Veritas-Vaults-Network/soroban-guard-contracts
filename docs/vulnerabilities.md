@@ -1219,8 +1219,8 @@ address without the depositor's consent.
 
 ## 32. Sensitive Data in Storage (`sensitive_storage`)
 
-**Contract:** `vulnerable/sensitive_storage` → inline secure pattern
-**Severity:** Critical
+**Contract:** `vulnerable/sensitive_storage` → `vulnerable/sensitive_storage/src/secure.rs`
+**Severity:** High
 
 ### What it is
 
@@ -1241,7 +1241,7 @@ pub fn initialize(env: Env, admin: Address, secret_key: Bytes) {
 ### Secure fix
 
 ```rust
-pub fn initialize_secure(env: Env, admin: Address, secret_hash: Bytes) {
+pub fn initialize(env: Env, admin: Address, secret_hash: Bytes) {
     admin.require_auth();
     // ✅ Store only a hash commitment — raw secret never touches the ledger
     env.storage().persistent().set(&DataKey::Commitment, &secret_hash);

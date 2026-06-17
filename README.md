@@ -351,6 +351,7 @@ flowchart TD
 | `missing_events` | No events emitted | — | Emit structured events |
 | `reward_debt_not_updated` | Reward debt not updated | _(inline `secure.rs`)_ | Update debt after payout |
 | `reward_checkpoint_missing` | Reward checkpoint missing | _(inline `secure.rs`)_ | Snapshot accumulator on deposit |
+| `sensitive_storage` | Sensitive data in storage | _(inline `secure.rs`)_ | Store only hash commitments |
 
 ### Useful links
 
