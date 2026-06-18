@@ -8,7 +8,7 @@
 //! 1. Validate amount > 0 && amount <= MAX_SAFE_AMOUNT on deposit/withdraw
 //! 2. Use checked_mul instead of unchecked * for balance * rate
 
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+use soroban_sdk::{contracttype, Address, Env};
 
 // Maximum safe amount to prevent overflow in arithmetic operations
 // Set to i128::MAX / 4 to leave headroom for all operations
@@ -19,10 +19,8 @@ pub enum DataKey {
     Balance(Address),
 }
 
-#[contract]
 pub struct SecureVault;
 
-#[contractimpl]
 impl SecureVault {
     /// Deposit `amount` into the contract for `user`.
     /// Requires user auth and validates amount is within safe bounds.
@@ -91,12 +89,39 @@ impl SecureVault {
 mod tests {
     extern crate std;
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Address, Env};
+    use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env};
 
-    fn setup() -> (Env, SecureVaultClient<'static>) {
+    // Test-only contract wrapper to provide Soroban environment context
+    #[contract]
+    pub struct TestContract;
+
+    #[contractimpl]
+    impl TestContract {
+        pub fn deposit(env: Env, user: Address, amount: i128) {
+            SecureVault::deposit(env, user, amount);
+        }
+
+        pub fn withdraw(env: Env, user: Address, amount: i128) {
+            SecureVault::withdraw(env, user, amount);
+        }
+
+        pub fn apply_rate(env: Env, user: Address, rate: i128) {
+            SecureVault::apply_rate(env, user, rate);
+        }
+
+        pub fn balance(env: Env, user: Address) -> i128 {
+            SecureVault::balance(env, user)
+        }
+
+        pub fn get_max_safe_amount(env: Env) -> i128 {
+            SecureVault::get_max_safe_amount(env)
+        }
+    }
+
+    fn setup() -> (Env, TestContractClient<'static>) {
         let env = Env::default();
-        let id = env.register_contract(None, SecureVault);
-        let client = SecureVaultClient::new(&env, &id);
+        let id = env.register_contract(None, TestContract);
+        let client = TestContractClient::new(&env, &id);
         (env, client)
     }
 
