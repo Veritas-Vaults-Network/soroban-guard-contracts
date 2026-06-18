@@ -39,9 +39,7 @@ pub mod secure {
             env.storage()
                 .persistent()
                 .set(&from_key, &(from_bal - amount));
-            env.storage()
-                .persistent()
-                .set(&to_key, &(to_bal + amount));
+            env.storage().persistent().set(&to_key, &(to_bal + amount));
             env.events()
                 .publish((symbol_short!("transfer"),), (from, to, amount));
         }
