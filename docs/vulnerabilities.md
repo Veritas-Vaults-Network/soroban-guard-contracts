@@ -1504,6 +1504,68 @@ the contract.
 
 ---
 
+## 36. Unchecked Arithmetic on Large Inputs (`near_overflow_input`)
+
+**Contract:** `vulnerable/near_overflow_input` → `vulnerable/near_overflow_input/src/secure.rs`
+**Severity:** High
+
+### What it is
+
+Functions that perform arithmetic operations (balance + amount, balance * rate)
+on user-controlled i128 inputs without validating that those inputs are within
+safe bounds. Passing values close to i128::MAX causes intermediate
+multiplications to overflow, triggering a panic in the runtime. This enables
+DoS attacks targeting specific user accounts.
+
+### Vulnerable pattern
+
+```rust
+pub fn deposit(env: Env, user: Address, amount: i128) {
+    user.require_auth();
+    // ❌ No upper bound check on amount
+    let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(balance + amount));
+}
+
+pub fn apply_rate(env: Env, user: Address, rate: i128) {
+    let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    // ❌ Unchecked multiplication: balance * rate can overflow
+    let new_balance = balance * rate;
+    env.storage().persistent().set(&key, &new_balance);
+}
+```
+
+### Secure fix
+
+```rust
+const MAX_SAFE_AMOUNT: i128 = i128::MAX / 4;
+
+pub fn deposit(env: Env, user: Address, amount: i128) {
+    user.require_auth();
+    // ✅ Validate amount is within safe bounds before use
+    if amount <= 0 || amount > MAX_SAFE_AMOUNT {
+        panic!("amount out of safe range");
+    }
+    let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(balance + amount));
+}
+
+pub fn apply_rate(env: Env, user: Address, rate: i128) {
+    let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    // ✅ Use checked_mul to safely detect overflow with clear error message
+    let new_balance = balance.checked_mul(rate).expect("overflow in apply_rate");
+    env.storage().persistent().set(&key, &new_balance);
+}
+```
+
+### Impact
+
+Denial of Service (DoS) on specific user accounts: an attacker can trigger
+panics by submitting transactions that cause arithmetic overflow, preventing
+legitimate users from interacting with the contract.
+
+---
+
 ## General Soroban Security Checklist
 
 | Check | Description |

@@ -191,3 +191,5 @@ mod tests {
         assert_eq!(max_safe, i128::MAX / 4);
     }
 }
+
+pub mod secure;
