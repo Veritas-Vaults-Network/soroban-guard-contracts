@@ -386,7 +386,75 @@ and extract unlimited rewards from a single stake.
 
 ---
 
-## 11. Division by Zero (`div_by_zero`)
+## 11. Reward Checkpoint Missing (`reward_checkpoint_missing`)
+
+**Contract:** `vulnerable/reward_checkpoint_missing` → `vulnerable/reward_checkpoint_missing/src/secure.rs`
+**Severity:** High
+
+### What it is
+
+A staking contract using the standard MasterChef-style global accumulator pattern
+fails to snapshot the accumulator into the user's `reward_debt` when new stake is
+added. The `reward_debt` is meant to record the accumulator value at deposit time,
+so that pending rewards only accrue from that point forward. Without this checkpoint,
+a late depositor inherits a debt of 0 and can immediately claim all accumulated
+rewards that were earned before they joined.
+
+### Vulnerable pattern
+
+```rust
+pub fn stake(env: Env, user: Address, amount: u64) {
+    user.require_auth();
+    let acc = get_acc(&env);
+    let current_stake = get_stake(&env, &user);
+
+    // ❌ Missing: set_reward_debt(&env, &user, acc * (current_stake + amount));
+    // debt defaults to 0, so a late depositor can claim all historical rewards
+    env.storage().persistent().set(
+        &DataKey::Stake(user.clone()),
+        &(current_stake + amount)
+    );
+}
+```
+
+Pending rewards are computed as:
+```
+pending = (acc_reward_per_share × user_stake) - user_reward_debt
+```
+
+Without the checkpoint, `debt = 0`, so `pending = acc × stake`, which includes
+all rewards earned before the user even joined.
+
+### Secure fix
+
+```rust
+pub fn stake(env: Env, user: Address, amount: u64) {
+    user.require_auth();
+    let new_total_stake = get_stake_secure(&env, &user).saturating_add(amount);
+    let acc = get_acc_secure(&env);
+
+    // Write the new balance
+    env.storage().persistent().set(
+        &SecureDataKey::Stake(user.clone()),
+        &new_total_stake
+    );
+
+    // ✅ FIX: Set reward_debt to the current accumulator × new stake.
+    // This captures the checkpoint so pending = 0 at deposit time.
+    let new_debt = acc.saturating_mul(new_total_stake) / 1_000_0000;
+    set_debt_secure(&env, &user, new_debt);
+}
+```
+
+### Impact
+
+Historical reward theft: a user who deposits after rewards have already accrued
+can immediately claim those pre-deposit rewards as if they had been staking all
+along. This allows late depositors to extract far more than they contributed.
+
+---
+
+## 12. Division by Zero (`div_by_zero`)
 
 **Contract:** `vulnerable/div_by_zero` → inline secure pattern
 **Severity:** Medium
@@ -426,8 +494,8 @@ before anyone has staked.
 
 ## 12. Missing Events (`missing_events`)
 
-**Contract:** `vulnerable/missing_events` → `secure/secure_vault`
-**Severity:** Low
+**Contract:** `vulnerable/missing_events` → `vulnerable/missing_events/src/secure.rs`
+**Severity:** Medium
 
 ### What it is
 
@@ -445,6 +513,13 @@ pub fn mint(env: Env, to: Address, amount: i128) {
     let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
     env.storage().persistent().set(&key, &(current + amount));
 }
+
+pub fn burn(env: Env, from: Address, amount: i128) {
+    // ❌ No event emitted — off-chain indexers are blind to this mutation
+    let key = DataKey::Balance(from);
+    let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(current - amount));
+}
 ```
 
 ### Secure fix
@@ -453,6 +528,11 @@ pub fn mint(env: Env, to: Address, amount: i128) {
 pub fn mint(env: Env, to: Address, amount: i128) {
     // ... balance update ...
     env.events().publish((symbol_short!("mint"),), (to, amount)); // ✅
+}
+
+pub fn burn(env: Env, from: Address, amount: i128) {
+    // ... balance update ...
+    env.events().publish((symbol_short!("burn"),), (from, amount)); // ✅
 }
 ```
 
@@ -1504,50 +1584,65 @@ the contract.
 
 ---
 
-## 36. Silent Admin Change (`silent_admin_change`)
+## 36. Unchecked Arithmetic on Large Inputs (`near_overflow_input`)
 
-**Contract:** `vulnerable/silent_admin_change` → `vulnerable/silent_admin_change/src/secure.rs`
-**Severity:** Medium
+**Contract:** `vulnerable/near_overflow_input` → `vulnerable/near_overflow_input/src/secure.rs`
+**Severity:** High
 
 ### What it is
 
-The `set_admin` function updates the admin address in persistent storage but
-never calls `env.events().publish()`. Off-chain monitors, dashboards, and audit
-tools have no way to detect admin changes without polling storage on every
-ledger. A malicious or compromised admin can silently transfer control to an
-attacker-controlled address with no on-chain trace.
+Functions that perform arithmetic operations (balance + amount, balance * rate)
+on user-controlled i128 inputs without validating that those inputs are within
+safe bounds. Passing values close to i128::MAX causes intermediate
+multiplications to overflow, triggering a panic in the runtime. This enables
+DoS attacks targeting specific user accounts.
 
 ### Vulnerable pattern
 
 ```rust
-pub fn set_admin(env: Env, new_admin: Address) {
-    let current: Address = env.storage().persistent().get(&ADMIN_KEY).expect("not initialized");
-    current.require_auth();
+pub fn deposit(env: Env, user: Address, amount: i128) {
+    user.require_auth();
+    // ❌ No upper bound check on amount
+    let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(balance + amount));
+}
 
-    // ❌ BUG: no event emitted — admin change is invisible to off-chain monitors
-    env.storage().persistent().set(&ADMIN_KEY, &new_admin);
+pub fn apply_rate(env: Env, user: Address, rate: i128) {
+    let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    // ❌ Unchecked multiplication: balance * rate can overflow
+    let new_balance = balance * rate;
+    env.storage().persistent().set(&key, &new_balance);
 }
 ```
 
 ### Secure fix
 
 ```rust
-pub fn set_admin(env: Env, new_admin: Address) {
-    let old_admin: Address = env.storage().persistent().get(&ADMIN_KEY).expect("not initialized");
-    old_admin.require_auth();
+const MAX_SAFE_AMOUNT: i128 = i128::MAX / 4;
 
-    env.storage().persistent().set(&ADMIN_KEY, &new_admin);
+pub fn deposit(env: Env, user: Address, amount: i128) {
+    user.require_auth();
+    // ✅ Validate amount is within safe bounds before use
+    if amount <= 0 || amount > MAX_SAFE_AMOUNT {
+        panic!("amount out of safe range");
+    }
+    let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(balance + amount));
+}
 
-    // ✅ Emit event so off-chain monitors can detect the change
-    env.events().publish((symbol_short!("AdminChg"),), (old_admin, new_admin));
+pub fn apply_rate(env: Env, user: Address, rate: i128) {
+    let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    // ✅ Use checked_mul to safely detect overflow with clear error message
+    let new_balance = balance.checked_mul(rate).expect("overflow in apply_rate");
+    env.storage().persistent().set(&key, &new_balance);
 }
 ```
 
 ### Impact
 
-Silent privilege escalation: an attacker with temporary admin access can
-transfer control without leaving an on-chain trace. Off-chain indexers, audit
-tools, and dashboards will miss the change unless they actively poll storage.
+Denial of Service (DoS) on specific user accounts: an attacker can trigger
+panics by submitting transactions that cause arithmetic overflow, preventing
+legitimate users from interacting with the contract.
 
 ---
 
