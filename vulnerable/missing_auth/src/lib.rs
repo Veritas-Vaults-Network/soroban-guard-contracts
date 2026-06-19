@@ -11,6 +11,7 @@ use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, E
 
 #[contracttype]
 pub enum DataKey {
+    Admin,
     Balance(Address),
 }
 
@@ -117,3 +118,6 @@ mod tests {
         assert_eq!(client.balance(&bob), 500);
     }
 }
+
+#[cfg(test)]
+mod secure;

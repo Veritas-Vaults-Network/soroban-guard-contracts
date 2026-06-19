@@ -6,7 +6,7 @@ Each entry maps to a contract in `vulnerable/` and its secure mirror in `secure/
 
 ## 1. Missing Authorization (`missing_auth`)
 
-**Contract:** `vulnerable/missing_auth` → `secure/secure_vault`
+**Contract:** `vulnerable/missing_auth` → `vulnerable/missing_auth/src/secure.rs`
 **Severity:** Critical
 
 ### What it is
@@ -16,28 +16,48 @@ Soroban's auth model requires every state-mutating function to call
 Without this call the Soroban host places no restriction on who can invoke the
 function — any account can submit a valid transaction.
 
+Two functions are unprotected in the vulnerable contract:
+
+- `transfer()` — no `from.require_auth()`, anyone can drain any account.
+- `mint()` — no admin check, anyone can inflate supply arbitrarily.
+
 ### Vulnerable pattern
 
 ```rust
+// ❌ transfer: no require_auth — anyone can drain `from`
 pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-    // ❌ No require_auth — anyone can drain `from`
-    let from_balance = env.storage().persistent().get(&DataKey::Balance(from.clone())).unwrap_or(0);
+    let from_balance: i128 = env.storage().persistent().get(&DataKey::Balance(from.clone())).unwrap_or(0);
     env.storage().persistent().set(&DataKey::Balance(from), &(from_balance - amount));
+}
+
+// ❌ mint: no admin check — anyone can mint arbitrary tokens
+pub fn mint(env: Env, to: Address, amount: i128) {
+    let current: i128 = env.storage().persistent().get(&DataKey::Balance(to.clone())).unwrap_or(0);
+    env.storage().persistent().set(&DataKey::Balance(to), &(current + amount));
 }
 ```
 
 ### Secure fix
 
 ```rust
+// ✅ transfer: from must authorise every spend
 pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-    from.require_auth(); // ✅ Only `from` can authorise this transfer
-    // ...
+    from.require_auth();
+    // ...balance update unchanged...
+}
+
+// ✅ mint: only the stored admin may mint
+pub fn mint(env: Env, to: Address, amount: i128) {
+    let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+    admin.require_auth();
+    // ...balance credit unchanged...
 }
 ```
 
 ### Impact
 
 Complete fund theft: any attacker can transfer the entire balance of any account.
+Unchecked mint allows unlimited supply inflation, devaluing all existing balances.
 
 ---
 
