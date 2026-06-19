@@ -99,7 +99,8 @@ impl RewardDebtNotUpdated {
     }
 }
 
-pub mod secure;
+#[cfg(test)]
+mod secure;
 
 #[cfg(test)]
 mod tests {
