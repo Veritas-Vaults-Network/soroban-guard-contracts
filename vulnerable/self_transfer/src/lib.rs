@@ -75,6 +75,11 @@ impl VulnerableToken {
     }
 }
 
+// Secure mirror; gated behind cfg(test) so its #[contract] symbols don't
+// collide with the vulnerable contract's in the cdylib wasm build.
+#[cfg(test)]
+mod secure;
+
 #[cfg(test)]
 mod tests {
     use super::*;

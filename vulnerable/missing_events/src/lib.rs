@@ -146,3 +146,6 @@ mod tests {
         assert_eq!(client.balance(&bob), 300);
     }
 }
+
+#[cfg(not(target_family = "wasm"))]
+pub mod secure;

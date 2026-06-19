@@ -6,7 +6,7 @@ Each entry maps to a contract in `vulnerable/` and its secure mirror in `secure/
 
 ## 1. Missing Authorization (`missing_auth`)
 
-**Contract:** `vulnerable/missing_auth` → `secure/secure_vault`
+**Contract:** `vulnerable/missing_auth` → `vulnerable/missing_auth/src/secure.rs`
 **Severity:** Critical
 
 ### What it is
@@ -16,28 +16,48 @@ Soroban's auth model requires every state-mutating function to call
 Without this call the Soroban host places no restriction on who can invoke the
 function — any account can submit a valid transaction.
 
+Two functions are unprotected in the vulnerable contract:
+
+- `transfer()` — no `from.require_auth()`, anyone can drain any account.
+- `mint()` — no admin check, anyone can inflate supply arbitrarily.
+
 ### Vulnerable pattern
 
 ```rust
+// ❌ transfer: no require_auth — anyone can drain `from`
 pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-    // ❌ No require_auth — anyone can drain `from`
-    let from_balance = env.storage().persistent().get(&DataKey::Balance(from.clone())).unwrap_or(0);
+    let from_balance: i128 = env.storage().persistent().get(&DataKey::Balance(from.clone())).unwrap_or(0);
     env.storage().persistent().set(&DataKey::Balance(from), &(from_balance - amount));
+}
+
+// ❌ mint: no admin check — anyone can mint arbitrary tokens
+pub fn mint(env: Env, to: Address, amount: i128) {
+    let current: i128 = env.storage().persistent().get(&DataKey::Balance(to.clone())).unwrap_or(0);
+    env.storage().persistent().set(&DataKey::Balance(to), &(current + amount));
 }
 ```
 
 ### Secure fix
 
 ```rust
+// ✅ transfer: from must authorise every spend
 pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-    from.require_auth(); // ✅ Only `from` can authorise this transfer
-    // ...
+    from.require_auth();
+    // ...balance update unchanged...
+}
+
+// ✅ mint: only the stored admin may mint
+pub fn mint(env: Env, to: Address, amount: i128) {
+    let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+    admin.require_auth();
+    // ...balance credit unchanged...
 }
 ```
 
 ### Impact
 
 Complete fund theft: any attacker can transfer the entire balance of any account.
+Unchecked mint allows unlimited supply inflation, devaluing all existing balances.
 
 ---
 
@@ -151,16 +171,18 @@ be forged or wiped by any attacker.
 
 ## 5. Self-Transfer Balance Inflation (`self_transfer`)
 
-**Contract:** `vulnerable/self_transfer` → `secure/secure_transfer`
-**Severity:** Medium
+**Contract:** `vulnerable/self_transfer` → `vulnerable/self_transfer/src/secure.rs`
+**Severity:** High
 
 ### What it is
 
 When `transfer(from, to, amount)` is called with `from == to`, both balance
 reads resolve to the same persistent storage slot. The function reads the
-balance into two separate variables, subtracts from the first write, then
-overwrites that slot with the second write — inflating the account balance by
-`amount`.
+balance into two separate variables (`from_balance` and `to_balance`, both equal
+to the original balance), subtracts `amount` on the first write, then overwrites
+that same slot with `to_balance + amount` on the second write. The credit write
+clobbers the debit write, so the account ends with `original + amount` instead of
+`original` — inflating the balance by `amount`.
 
 ### Vulnerable pattern
 
@@ -179,11 +201,16 @@ pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
 
 ```rust
 pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-    assert!(from != to, "self-transfer not allowed"); // ✅ Guard before any storage access
     from.require_auth();
+    if from == to { return; } // ✅ FIX: no-op self-transfer, guard before any storage read
     // ...
 }
 ```
+
+A self-transfer is treated as a no-op (the common token-standard behaviour), so
+the colliding debit and credit writes never happen. `panic!("self-transfer not
+allowed")` would be an equally valid choice. The guard sits before any storage
+read so the corrupting double-write is unreachable.
 
 ### Impact
 
@@ -386,7 +413,75 @@ and extract unlimited rewards from a single stake.
 
 ---
 
-## 11. Division by Zero (`div_by_zero`)
+## 11. Reward Checkpoint Missing (`reward_checkpoint_missing`)
+
+**Contract:** `vulnerable/reward_checkpoint_missing` → `vulnerable/reward_checkpoint_missing/src/secure.rs`
+**Severity:** High
+
+### What it is
+
+A staking contract using the standard MasterChef-style global accumulator pattern
+fails to snapshot the accumulator into the user's `reward_debt` when new stake is
+added. The `reward_debt` is meant to record the accumulator value at deposit time,
+so that pending rewards only accrue from that point forward. Without this checkpoint,
+a late depositor inherits a debt of 0 and can immediately claim all accumulated
+rewards that were earned before they joined.
+
+### Vulnerable pattern
+
+```rust
+pub fn stake(env: Env, user: Address, amount: u64) {
+    user.require_auth();
+    let acc = get_acc(&env);
+    let current_stake = get_stake(&env, &user);
+
+    // ❌ Missing: set_reward_debt(&env, &user, acc * (current_stake + amount));
+    // debt defaults to 0, so a late depositor can claim all historical rewards
+    env.storage().persistent().set(
+        &DataKey::Stake(user.clone()),
+        &(current_stake + amount)
+    );
+}
+```
+
+Pending rewards are computed as:
+```
+pending = (acc_reward_per_share × user_stake) - user_reward_debt
+```
+
+Without the checkpoint, `debt = 0`, so `pending = acc × stake`, which includes
+all rewards earned before the user even joined.
+
+### Secure fix
+
+```rust
+pub fn stake(env: Env, user: Address, amount: u64) {
+    user.require_auth();
+    let new_total_stake = get_stake_secure(&env, &user).saturating_add(amount);
+    let acc = get_acc_secure(&env);
+
+    // Write the new balance
+    env.storage().persistent().set(
+        &SecureDataKey::Stake(user.clone()),
+        &new_total_stake
+    );
+
+    // ✅ FIX: Set reward_debt to the current accumulator × new stake.
+    // This captures the checkpoint so pending = 0 at deposit time.
+    let new_debt = acc.saturating_mul(new_total_stake) / 1_000_0000;
+    set_debt_secure(&env, &user, new_debt);
+}
+```
+
+### Impact
+
+Historical reward theft: a user who deposits after rewards have already accrued
+can immediately claim those pre-deposit rewards as if they had been staking all
+along. This allows late depositors to extract far more than they contributed.
+
+---
+
+## 12. Division by Zero (`div_by_zero`)
 
 **Contract:** `vulnerable/div_by_zero` → inline secure pattern
 **Severity:** Medium
@@ -426,8 +521,8 @@ before anyone has staked.
 
 ## 12. Missing Events (`missing_events`)
 
-**Contract:** `vulnerable/missing_events` → `secure/secure_vault`
-**Severity:** Low
+**Contract:** `vulnerable/missing_events` → `vulnerable/missing_events/src/secure.rs`
+**Severity:** Medium
 
 ### What it is
 
@@ -445,6 +540,13 @@ pub fn mint(env: Env, to: Address, amount: i128) {
     let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
     env.storage().persistent().set(&key, &(current + amount));
 }
+
+pub fn burn(env: Env, from: Address, amount: i128) {
+    // ❌ No event emitted — off-chain indexers are blind to this mutation
+    let key = DataKey::Balance(from);
+    let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(current - amount));
+}
 ```
 
 ### Secure fix
@@ -453,6 +555,11 @@ pub fn mint(env: Env, to: Address, amount: i128) {
 pub fn mint(env: Env, to: Address, amount: i128) {
     // ... balance update ...
     env.events().publish((symbol_short!("mint"),), (to, amount)); // ✅
+}
+
+pub fn burn(env: Env, from: Address, amount: i128) {
+    // ... balance update ...
+    env.events().publish((symbol_short!("burn"),), (from, amount)); // ✅
 }
 ```
 
@@ -1501,6 +1608,118 @@ pub fn accept_admin(env: Env) {
 Privilege escalation: a random caller can finalise a pending admin transfer
 without the pending address's authorisation, gaining full admin control over
 the contract.
+
+---
+
+## 36. Unchecked Arithmetic on Large Inputs (`near_overflow_input`)
+
+**Contract:** `vulnerable/near_overflow_input` → `vulnerable/near_overflow_input/src/secure.rs`
+**Severity:** High
+
+### What it is
+
+Functions that perform arithmetic operations (balance + amount, balance * rate)
+on user-controlled i128 inputs without validating that those inputs are within
+safe bounds. Passing values close to i128::MAX causes intermediate
+multiplications to overflow, triggering a panic in the runtime. This enables
+DoS attacks targeting specific user accounts.
+
+### Vulnerable pattern
+
+```rust
+pub fn deposit(env: Env, user: Address, amount: i128) {
+    user.require_auth();
+    // ❌ No upper bound check on amount
+    let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(balance + amount));
+}
+
+pub fn apply_rate(env: Env, user: Address, rate: i128) {
+    let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    // ❌ Unchecked multiplication: balance * rate can overflow
+    let new_balance = balance * rate;
+    env.storage().persistent().set(&key, &new_balance);
+}
+```
+
+### Secure fix
+
+```rust
+const MAX_SAFE_AMOUNT: i128 = i128::MAX / 4;
+
+pub fn deposit(env: Env, user: Address, amount: i128) {
+    user.require_auth();
+    // ✅ Validate amount is within safe bounds before use
+    if amount <= 0 || amount > MAX_SAFE_AMOUNT {
+        panic!("amount out of safe range");
+    }
+    let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(balance + amount));
+}
+
+pub fn apply_rate(env: Env, user: Address, rate: i128) {
+    let balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    // ✅ Use checked_mul to safely detect overflow with clear error message
+    let new_balance = balance.checked_mul(rate).expect("overflow in apply_rate");
+    env.storage().persistent().set(&key, &new_balance);
+}
+```
+
+### Impact
+
+Denial of Service (DoS) on specific user accounts: an attacker can trigger
+panics by submitting transactions that cause arithmetic overflow, preventing
+legitimate users from interacting with the contract.
+
+---
+
+## 37. Reward Debt Not Updated on Claim (`reward_debt_not_updated`)
+
+**Contract:** `vulnerable/reward_debt_not_updated` → `vulnerable/reward_debt_not_updated/src/secure.rs`
+**Severity:** High
+
+### What it is
+
+A staking contract using the MasterChef accumulator pattern. `claim_rewards()`
+pays out the pending rewards (`acc × stake − debt`) but **never advances
+`reward_debt`** afterward. Because the debt is never moved up to the current
+accumulator, every subsequent `claim_rewards` call recomputes the same
+`pending` amount and pays it out again — letting a staker drain the entire
+reward pool with repeated calls.
+
+This is in the same accumulator family as `reward_checkpoint_missing` but is a
+distinct bug: that one fails to snapshot debt on *deposit* (a one-time theft of
+historical rewards by a late joiner), whereas this one fails to update debt on
+*claim* (unlimited drain of the same window).
+
+### Vulnerable pattern
+
+```rust
+pub fn claim_rewards(env: Env, user: Address) -> u64 {
+    user.require_auth();
+    let stake = get_stake(&env, &user);
+    let acc = get_acc(&env);
+    let entitled = acc.saturating_mul(stake) / 1_000_0000;
+    let debt = get_debt(&env, &user);
+    let pending = entitled.saturating_sub(debt);
+    // ❌ Missing: set_debt(&env, &user, entitled);
+    pending
+}
+```
+
+### Secure fix
+
+```rust
+let pending = entitled.saturating_sub(debt);
+// ✅ Advance debt so already-paid rewards can't be claimed again.
+set_debt(&env, &user, entitled);
+pending
+```
+
+### Impact
+
+Unlimited reward drain: a staker can call `claim_rewards` repeatedly and be paid
+the same `pending` amount each time until the reward pool is empty.
 
 ---
 
