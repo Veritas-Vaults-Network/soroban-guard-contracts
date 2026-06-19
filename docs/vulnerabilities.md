@@ -494,8 +494,8 @@ before anyone has staked.
 
 ## 12. Missing Events (`missing_events`)
 
-**Contract:** `vulnerable/missing_events` → `secure/secure_vault`
-**Severity:** Low
+**Contract:** `vulnerable/missing_events` → `vulnerable/missing_events/src/secure.rs`
+**Severity:** Medium
 
 ### What it is
 
@@ -513,6 +513,13 @@ pub fn mint(env: Env, to: Address, amount: i128) {
     let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
     env.storage().persistent().set(&key, &(current + amount));
 }
+
+pub fn burn(env: Env, from: Address, amount: i128) {
+    // ❌ No event emitted — off-chain indexers are blind to this mutation
+    let key = DataKey::Balance(from);
+    let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(current - amount));
+}
 ```
 
 ### Secure fix
@@ -521,6 +528,11 @@ pub fn mint(env: Env, to: Address, amount: i128) {
 pub fn mint(env: Env, to: Address, amount: i128) {
     // ... balance update ...
     env.events().publish((symbol_short!("mint"),), (to, amount)); // ✅
+}
+
+pub fn burn(env: Env, from: Address, amount: i128) {
+    // ... balance update ...
+    env.events().publish((symbol_short!("burn"),), (from, amount)); // ✅
 }
 ```
 
