@@ -171,16 +171,18 @@ be forged or wiped by any attacker.
 
 ## 5. Self-Transfer Balance Inflation (`self_transfer`)
 
-**Contract:** `vulnerable/self_transfer` → `secure/secure_transfer`
-**Severity:** Medium
+**Contract:** `vulnerable/self_transfer` → `vulnerable/self_transfer/src/secure.rs`
+**Severity:** High
 
 ### What it is
 
 When `transfer(from, to, amount)` is called with `from == to`, both balance
 reads resolve to the same persistent storage slot. The function reads the
-balance into two separate variables, subtracts from the first write, then
-overwrites that slot with the second write — inflating the account balance by
-`amount`.
+balance into two separate variables (`from_balance` and `to_balance`, both equal
+to the original balance), subtracts `amount` on the first write, then overwrites
+that same slot with `to_balance + amount` on the second write. The credit write
+clobbers the debit write, so the account ends with `original + amount` instead of
+`original` — inflating the balance by `amount`.
 
 ### Vulnerable pattern
 
@@ -199,11 +201,16 @@ pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
 
 ```rust
 pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-    assert!(from != to, "self-transfer not allowed"); // ✅ Guard before any storage access
     from.require_auth();
+    if from == to { return; } // ✅ FIX: no-op self-transfer, guard before any storage read
     // ...
 }
 ```
+
+A self-transfer is treated as a no-op (the common token-standard behaviour), so
+the colliding debit and credit writes never happen. `panic!("self-transfer not
+allowed")` would be an equally valid choice. The guard sits before any storage
+read so the corrupting double-write is unreachable.
 
 ### Impact
 
