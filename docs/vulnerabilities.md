@@ -1646,6 +1646,56 @@ legitimate users from interacting with the contract.
 
 ---
 
+## 37. Reward Debt Not Updated on Claim (`reward_debt_not_updated`)
+
+**Contract:** `vulnerable/reward_debt_not_updated` → `vulnerable/reward_debt_not_updated/src/secure.rs`
+**Severity:** High
+
+### What it is
+
+A staking contract using the MasterChef accumulator pattern. `claim_rewards()`
+pays out the pending rewards (`acc × stake − debt`) but **never advances
+`reward_debt`** afterward. Because the debt is never moved up to the current
+accumulator, every subsequent `claim_rewards` call recomputes the same
+`pending` amount and pays it out again — letting a staker drain the entire
+reward pool with repeated calls.
+
+This is in the same accumulator family as `reward_checkpoint_missing` but is a
+distinct bug: that one fails to snapshot debt on *deposit* (a one-time theft of
+historical rewards by a late joiner), whereas this one fails to update debt on
+*claim* (unlimited drain of the same window).
+
+### Vulnerable pattern
+
+```rust
+pub fn claim_rewards(env: Env, user: Address) -> u64 {
+    user.require_auth();
+    let stake = get_stake(&env, &user);
+    let acc = get_acc(&env);
+    let entitled = acc.saturating_mul(stake) / 1_000_0000;
+    let debt = get_debt(&env, &user);
+    let pending = entitled.saturating_sub(debt);
+    // ❌ Missing: set_debt(&env, &user, entitled);
+    pending
+}
+```
+
+### Secure fix
+
+```rust
+let pending = entitled.saturating_sub(debt);
+// ✅ Advance debt so already-paid rewards can't be claimed again.
+set_debt(&env, &user, entitled);
+pending
+```
+
+### Impact
+
+Unlimited reward drain: a staker can call `claim_rewards` repeatedly and be paid
+the same `pending` amount each time until the reward pool is empty.
+
+---
+
 ## General Soroban Security Checklist
 
 | Check | Description |
