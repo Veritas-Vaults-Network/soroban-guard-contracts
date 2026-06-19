@@ -11,6 +11,7 @@ use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, E
 
 #[contracttype]
 pub enum DataKey {
+    Admin,
     Balance(Address),
 }
 
