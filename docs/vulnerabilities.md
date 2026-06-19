@@ -963,7 +963,7 @@ steal `N` tokens from `victim` using only their own auth.
 
 ## 23. Timestamp-Based Time Lock (`timestamp_lock`)
 
-**Contract:** `vulnerable/timestamp_lock` → `secure/sequence_lock`
+**Contract:** `vulnerable/timestamp_lock` → `vulnerable/timestamp_lock/src/secure.rs`
 **Severity:** Medium
 
 ### What it is
