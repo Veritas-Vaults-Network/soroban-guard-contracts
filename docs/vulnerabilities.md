@@ -1504,6 +1504,53 @@ the contract.
 
 ---
 
+## 36. Silent Admin Change (`silent_admin_change`)
+
+**Contract:** `vulnerable/silent_admin_change` → `vulnerable/silent_admin_change/src/secure.rs`
+**Severity:** Medium
+
+### What it is
+
+The `set_admin` function updates the admin address in persistent storage but
+never calls `env.events().publish()`. Off-chain monitors, dashboards, and audit
+tools have no way to detect admin changes without polling storage on every
+ledger. A malicious or compromised admin can silently transfer control to an
+attacker-controlled address with no on-chain trace.
+
+### Vulnerable pattern
+
+```rust
+pub fn set_admin(env: Env, new_admin: Address) {
+    let current: Address = env.storage().persistent().get(&ADMIN_KEY).expect("not initialized");
+    current.require_auth();
+
+    // ❌ BUG: no event emitted — admin change is invisible to off-chain monitors
+    env.storage().persistent().set(&ADMIN_KEY, &new_admin);
+}
+```
+
+### Secure fix
+
+```rust
+pub fn set_admin(env: Env, new_admin: Address) {
+    let old_admin: Address = env.storage().persistent().get(&ADMIN_KEY).expect("not initialized");
+    old_admin.require_auth();
+
+    env.storage().persistent().set(&ADMIN_KEY, &new_admin);
+
+    // ✅ Emit event so off-chain monitors can detect the change
+    env.events().publish((symbol_short!("AdminChg"),), (old_admin, new_admin));
+}
+```
+
+### Impact
+
+Silent privilege escalation: an attacker with temporary admin access can
+transfer control without leaving an on-chain trace. Off-chain indexers, audit
+tools, and dashboards will miss the change unless they actively poll storage.
+
+---
+
 ## General Soroban Security Checklist
 
 | Check | Description |
