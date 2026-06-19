@@ -92,6 +92,8 @@ impl TimeLockedVault {
     }
 }
 
+pub mod secure;
+
 #[cfg(test)]
 mod tests {
     use super::*;
