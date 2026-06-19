@@ -172,3 +172,6 @@ mod tests {
         assert!(reward > 0, "post-deposit rewards accrue correctly");
     }
 }
+
+#[cfg(test)]
+mod secure;
