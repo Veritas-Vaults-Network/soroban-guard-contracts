@@ -963,7 +963,7 @@ steal `N` tokens from `victim` using only their own auth.
 
 ## 23. Timestamp-Based Time Lock (`timestamp_lock`)
 
-**Contract:** `vulnerable/timestamp_lock` → `secure/sequence_lock`
+**Contract:** `vulnerable/timestamp_lock` → `vulnerable/timestamp_lock/src/secure.rs`
 **Severity:** Medium
 
 ### What it is
@@ -1326,8 +1326,8 @@ address without the depositor's consent.
 
 ## 32. Sensitive Data in Storage (`sensitive_storage`)
 
-**Contract:** `vulnerable/sensitive_storage` → inline secure pattern
-**Severity:** Critical
+**Contract:** `vulnerable/sensitive_storage` → `vulnerable/sensitive_storage/src/secure.rs`
+**Severity:** High
 
 ### What it is
 
@@ -1343,26 +1343,55 @@ pub fn initialize(env: Env, admin: Address, secret_key: Bytes) {
     // ❌ Raw secret written to public ledger state — readable by anyone
     env.storage().persistent().set(&DataKey::SecretKey, &secret_key);
 }
+
+pub fn get_secret(env: Env) -> Bytes {
+    env.storage().persistent().get(&DataKey::SecretKey)
+        .expect("secret key not set")
+    // ❌ No access control — any caller can extract the raw secret
+}
 ```
+
+### Why it is dangerous
+
+1. **Public ledger state** — Soroban persistent storage is fully transparent on Stellar.
+   Any observer with access to the network can query the ledger and read the raw secret
+   without calling any contract method.
+
+2. **No authentication on read** — Even if `initialize` required auth, the stored secret
+   can be read by anyone. Authentication only protects writes.
+
+3. **Permanent exposure** — Once written, the secret remains in ledger history indefinitely.
 
 ### Secure fix
 
 ```rust
-pub fn initialize_secure(env: Env, admin: Address, secret_hash: Bytes) {
+pub fn initialize(env: Env, admin: Address, secret_hash: Bytes) {
+    if env.storage().persistent().has(&DataKey::Admin) {
+        panic!("already initialized");
+    }
     admin.require_auth();
     // ✅ Store only a hash commitment — raw secret never touches the ledger
     env.storage().persistent().set(&DataKey::Commitment, &secret_hash);
 }
+
+pub fn get_commitment(env: Env) -> Bytes {
+    env.storage().persistent().get(&DataKey::Commitment)
+        .expect("commitment not set")
+    // ✅ Returns only the commitment hash, not the raw secret
+}
 ```
 
-Secrets must never be stored on-chain. Use off-chain key management
-infrastructure and store only public commitments (e.g. SHA-256 hashes) on the
-ledger.
+**Key improvements:**
+- Raw secrets are never written to ledger
+- Only public commitments (SHA-256 hashes) are stored on-chain
+- Raw secrets managed off-chain (HSM, secure vault, Vault, etc.)
+- Re-initialization guard prevents admin replacement attacks
 
 ### Impact
 
-Credential exposure: any observer can read the raw secret from ledger state,
-compromising any system that relies on that secret remaining private.
+**Credential exposure:** Any observer can read the raw secret from ledger state,
+compromising any system that relies on that secret remaining private. This is
+especially critical for API keys, encryption keys, and private key material.
 
 ---
 
