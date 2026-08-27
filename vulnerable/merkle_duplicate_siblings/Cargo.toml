@@ -1,0 +1,16 @@
+[package]
+name = "merkle-duplicate-siblings"
+version = "0.1.0"
+edition = "2021"
+description = "Vulnerable Soroban contract demonstrating replay of a valid merkle proof via proof-content-based (instead of claimant-based) replay protection in an append-only merkle allocation chain"
+license = "MIT"
+repository = "https://github.com/Veritas-Vaults-Network/soroban-guard-contracts"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

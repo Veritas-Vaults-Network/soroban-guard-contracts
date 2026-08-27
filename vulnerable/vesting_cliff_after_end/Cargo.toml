@@ -1,0 +1,16 @@
+[package]
+name = "vesting-cliff-after-end"
+version = "0.1.0"
+edition = "2021"
+description = "Vulnerable Soroban contract demonstrating missing validation that a vesting cliff must precede its end ledger"
+license = "MIT"
+repository = "https://github.com/Veritas-Vaults-Network/soroban-guard-contracts"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

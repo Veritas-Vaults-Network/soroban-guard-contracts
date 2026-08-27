@@ -1,0 +1,16 @@
+[package]
+name = "airdrop-campaign-collision"
+version = "0.1.0"
+edition = "2021"
+description = "Vulnerable Soroban contract demonstrating cross-campaign merkle root collision in a multi-campaign airdrop platform"
+license = "MIT"
+repository = "https://github.com/Veritas-Vaults-Network/soroban-guard-contracts"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

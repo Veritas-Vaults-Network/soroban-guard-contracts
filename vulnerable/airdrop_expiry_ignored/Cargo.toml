@@ -1,0 +1,16 @@
+[package]
+name = "airdrop-expiry-ignored"
+version = "0.1.0"
+edition = "2021"
+description = "Vulnerable Soroban contract demonstrating an airdrop claim that ignores its documented expiry time"
+license = "MIT"
+repository = "https://github.com/Veritas-Vaults-Network/soroban-guard-contracts"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
