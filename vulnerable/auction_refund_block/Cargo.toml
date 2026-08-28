@@ -1,0 +1,16 @@
+[package]
+name = "auction-refund-block"
+version = "0.1.0"
+edition = "2021"
+description = "Vulnerable Soroban contract demonstrating an English auction with a broken pull-payment refund"
+license = "MIT"
+repository = "https://github.com/Veritas-Vaults-Network/soroban-guard-contracts"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
