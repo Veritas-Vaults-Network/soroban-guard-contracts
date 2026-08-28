@@ -1,0 +1,16 @@
+[package]
+name = "collateral-withdraw-no-health-check"
+version = "0.1.0"
+edition = "2021"
+description = "Vulnerable Soroban contract: collateral withdrawal without health check / solvency validation"
+license = "MIT"
+repository = "https://github.com/Veritas-Vaults-Network/soroban-guard-contracts"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+soroban-sdk = { workspace = true }
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }

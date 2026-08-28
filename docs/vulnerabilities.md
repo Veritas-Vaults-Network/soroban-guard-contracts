@@ -1752,452 +1752,100 @@ the same `pending` amount each time until the reward pool is empty.
 
 ---
 
-## 38. Cross-Campaign Merkle Root Collision (`airdrop_campaign_collision`)
+## 38. Collateral Withdrawal Without Health Check (`collateral_withdraw_no_health_check`)
 
-**Contract:** `vulnerable/airdrop_campaign_collision`
-**Severity:** High
-
-### What it is
-
-A multi-campaign airdrop platform where one contract hosts several airdrop
-"campaigns", each identified by a `campaign_id`, each with its own merkle root
-and reward token. `Token(u32)` and `Claimed(u32, Address)` are correctly
-namespaced by `campaign_id`, but `MerkleRoot` is a single global storage slot
-shared by every campaign. Creating a second campaign silently overwrites the
-first campaign's root, so any not-yet-claimed allocation from the first
-campaign now hashes up against the wrong root and fails verification —
-permanently, with no recovery function.
-
-### Vulnerable pattern
-
-```rust
-#[contracttype]
-pub enum DataKey {
-    Admin,
-    MerkleRoot,             // ❌ not namespaced by campaign_id
-    Token(u32),             // ✅ namespaced
-    Claimed(u32, Address),  // ✅ namespaced
-}
-
-pub fn create_campaign(env: Env, campaign_id: u32, merkle_root: BytesN<32>, token: Address) {
-    // ...
-    env.storage().persistent().set(&DataKey::MerkleRoot, &merkle_root);
-}
-```
-
-### Secure fix
-
-```rust
-#[contracttype]
-pub enum DataKey {
-    Admin,
-    MerkleRoot(u32),  // ✅ namespaced exactly like Token/Claimed
-    Token(u32),
-    Claimed(u32, Address),
-}
-```
-
-### Impact
-
-Permanent fund lock: launching a new campaign bricks every un-claimed
-allocation from every earlier campaign, with the funded tokens stuck in the
-contract and no way for their rightful, legitimately eligible claimants — or
-the admin — to ever recover them.
-
----
-
-## 39. Missing Start-Time Check in Time-Gated Merkle Airdrop (`airdrop_claim_before_start`)
-
-**Contract:** `vulnerable/airdrop_claim_before_start`
-**Severity:** Medium
-
-### What it is
-
-A merkle airdrop meant to be claimable only during an announced public window
-`[start_time, end_time]`. `claim()` correctly asserts
-`timestamp <= end_time` but never asserts `timestamp >= start_time`, even
-though `start_time` is stored and displayed as if it were enforced — the lower
-bound of the claim window simply does not exist at runtime.
-
-### Vulnerable pattern
-
-```rust
-pub fn claim(env: Env, claimant: Address, amount: i128, proof: Vec<BytesN<32>>) {
-    // ❌ start_time is stored but never checked here.
-    assert!(env.ledger().timestamp() <= end_time, "airdrop has ended");
-    verify_merkle_proof(&env, &claimant, amount, &proof);
-    // ...
-}
-```
-
-### Secure fix
-
-```rust
-let now = env.ledger().timestamp();
-assert!(now >= start_time, "airdrop has not started");
-assert!(now <= end_time, "airdrop has ended");
-```
-
-### Impact
-
-Anyone with early knowledge of the merkle root or their own leaf data — a team
-insider, a leaked snapshot, or a bot scraping a not-yet-announced contract —
-can claim (and act on or dump) their allocation arbitrarily long before the
-official public launch, defeating the entire purpose of a scheduled,
-fair-launch claim window.
-
----
-
-## 40. Airdrop Expiry Ignored (`airdrop_expiry_ignored`)
-
-**Contract:** `vulnerable/airdrop_expiry_ignored`
-**Severity:** Medium
-
-### What it is
-
-An expiring merkle airdrop documented to close at `end_time`, after which the
-admin sweeps any unclaimed balance to a treasury address. `sweep_unclaimed()`
-correctly gates on `timestamp > end_time`, but `claim()` never checks
-`end_time` at all — the campaign never actually closes.
-
-### Vulnerable pattern
-
-```rust
-pub fn claim(env: Env, claimant: Address, amount: i128, proof: Vec<BytesN<32>>) {
-    // ❌ no check against DataKey::EndTime here at all.
-    verify_merkle_proof(&env, &claimant, amount, &proof);
-    // ...
-}
-```
-
-### Secure fix
-
-```rust
-assert!(env.ledger().timestamp() <= end_time, "airdrop has ended");
-```
-
-### Impact
-
-The campaign's advertised close date is meaningless — claims work forever,
-breaking any accounting that assumes the campaign actually closes. Worse, if
-the admin sweeps "unclaimed" funds to treasury after `end_time` believing the
-campaign is over, a late but legitimately-eligible claimant can still call
-`claim()` afterward: the transfer either panics on insufficient contract
-balance (a confusing failure for someone who should have been paid) or
-succeeds and improperly draws down funds the admin already re-allocated
-elsewhere.
-
----
-
-## 41. English Auction with Broken Pull-Payment Refund (`auction_refund_block`)
-
-**Contract:** `vulnerable/auction_refund_block`
-**Severity:** High
-
-### What it is
-
-An English auction where bidders escrow tokens with each `bid()` and reclaim
-them later via a separate `withdraw()` (the standard pull-payment pattern).
-The contract tracks only a **single** pending-return slot
-(`PendingReturnBidder` / `PendingReturnAmount`) for "the most recently outbid
-bidder" instead of a per-bidder mapping. Every new outbid unconditionally
-overwrites that slot, clobbering any prior entry that was never claimed. This
-mirrors a well-known historical bug in the original "SimpleAuction" Solidity
-tutorial contract.
-
-### Vulnerable pattern
-
-```rust
-#[contracttype]
-pub enum DataKey {
-    // ...
-    PendingReturnBidder,   // ❌ single shared slot
-    PendingReturnAmount,   // ❌ single shared slot
-}
-
-if let Some(prev_bidder) = prev_bidder {
-    // ❌ overwrites whatever was here before, claimed or not.
-    env.storage().persistent().set(&DataKey::PendingReturnBidder, &prev_bidder);
-    env.storage().persistent().set(&DataKey::PendingReturnAmount, &highest_bid);
-}
-```
-
-### Secure fix
-
-```rust
-#[contracttype]
-pub enum DataKey {
-    // ...
-    PendingReturn(Address),  // ✅ per-bidder map, accumulates independently
-}
-```
-
-### Impact
-
-Permanent loss of funds: bidder A is outbid by B (A's refund recorded); before
-A withdraws, C outbids B, overwriting the slot with B's refund. A's escrowed
-tokens are now permanently stuck in the contract with no recovery path — not
-even for the admin.
-
----
-
-## 42. Epoch-Advance Keeper Missing a Time Guard (`epoch_claim_no_advance`)
-
-**Contract:** `vulnerable/epoch_claim_no_advance`
+**Contract:** `vulnerable/collateral_withdraw_no_health_check` → `vulnerable/collateral_withdraw_no_health_check/src/secure.rs`
 **Severity:** Critical
 
 ### What it is
 
-An epoch-based staking reward distributor using a MasterChef-style
-`reward_per_share` accumulator, with a permissionless keeper function,
-`advance_epoch()`, meant to be called once per real epoch. Permissionless
-access is intentional (the function should only reflect the passage of time),
-but `advance_epoch()` has no time guard at all — nothing stops it from being
-called an unbounded number of times back-to-back with zero real time
-elapsing between calls.
+A collateralized lending protocol requires borrowers to maintain a minimum collateral-to-debt
+ratio (governed by `max_ltv_bps`). While `borrow()` enforces that new debt is backed by the user's
+deposited collateral, `withdraw_collateral()` only checks that the user has enough deposited collateral
+balance (`current >= amount`) without verifying that their **remaining collateral** is sufficient to back
+their active outstanding debt.
+
+An attacker can deposit collateral, borrow up to the maximum allowable debt, and immediately withdraw
+100% of their deposited collateral. The attacker walks away with the borrowed funds while leaving
+unbacked bad debt in the protocol.
 
 ### Vulnerable pattern
 
 ```rust
-pub fn advance_epoch(env: Env) {
-    let total_staked = get_total_staked(&env);
-    assert!(total_staked > 0, "no stakers");
-    // ❌ no timestamp/sequence check of any kind here.
-    let delta = get_epoch_reward_amount(&env) * PRECISION / total_staked;
-    set_reward_per_share(&env, get_reward_per_share(&env) + delta);
+pub fn withdraw_collateral(env: Env, user: Address, amount: i128) {
+    user.require_auth();
+    assert!(amount > 0, "amount must be positive");
+
+    let current: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Collateral(user.clone()))
+        .unwrap_or(0);
+    assert!(current >= amount, "insufficient collateral balance");
+
+    // ❌ Missing health check on remaining collateral: user can withdraw collateral while holding debt
+    let new_collateral = current.checked_sub(amount).expect("underflow");
+    env.storage()
+        .persistent()
+        .set(&DataKey::Collateral(user.clone()), &new_collateral);
 }
 ```
 
 ### Secure fix
 
 ```rust
-let now = env.ledger().timestamp();
-assert!(now >= last_advance_time + epoch_length, "epoch not elapsed");
-set_last_advance_time(&env, now);
-```
+pub fn withdraw_collateral(env: Env, user: Address, amount: i128) {
+    user.require_auth();
+    assert!(amount > 0, "amount must be positive");
 
-### Impact
+    let current: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Collateral(user.clone()))
+        .unwrap_or(0);
+    assert!(current >= amount, "insufficient collateral balance");
 
-Critical: any single staker (or anyone, staked or not, since the function is
-deliberately permissionless) can call `advance_epoch()` in a tight loop to
-inflate the accumulator arbitrarily, then `claim()` a payout many multiples
-larger than a single real epoch would ever justify — draining the entire
-funded reward pool immediately.
+    let remaining_collateral = current.checked_sub(amount).expect("underflow");
+    let debt: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Debt(user.clone()))
+        .unwrap_or(0);
 
----
+    // ✅ FIX: Verify remaining collateral satisfies LTV requirements for existing debt
+    if debt > 0 {
+        let price: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CollateralPriceUsd)
+            .expect("not initialized");
+        let ltv_bps: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MaxLtvBps)
+            .expect("not initialized");
 
-## 43. Merkle Duplicate Siblings — Proof-Content-Based Replay Protection (`merkle_duplicate_siblings`)
+        let remaining_value_usd =
+            remaining_collateral.checked_mul(price).expect("overflow") / 1_000_000;
+        let max_supported_debt =
+            remaining_value_usd.checked_mul(ltv_bps as i128).expect("overflow") / 10_000;
 
-**Contract:** `vulnerable/merkle_duplicate_siblings`
-**Severity:** Critical
-
-### What it is
-
-An incrementally-growing ("rolling") merkle airdrop chain where the admin
-appends one new claimant at a time (`new_root = hash_pair(old_root,
-leaf_hash(claimant, amount))`). `add_claimant` never checks whether a
-claimant has already been added, so an operational slip (e.g. re-running a
-batch-approval script) can append the same claimant twice. Replay protection
-is keyed by `sha256(claimant || proof)` instead of by the claimant's address
-alone, so a claimant with two structurally different but both valid proofs to
-the same root gets two distinct fingerprints — each independently claimable.
-
-### Vulnerable pattern
-
-```rust
-// ❌ binds replay-protection to the whole proof array, not the claimant.
-fn claim_fingerprint(env: &Env, claimant: &Address, proof: &Vec<BytesN<32>>) -> BytesN<32> {
-    let mut buf = Bytes::new(env);
-    buf.append(&claimant.to_xdr(env));
-    for sibling in proof.iter() {
-        buf.append(&Bytes::from(sibling.clone()));
+        assert!(
+            debt <= max_supported_debt,
+            "health check failed: remaining collateral cannot cover debt"
+        );
     }
-    env.crypto().sha256(&buf).into()
-}
-```
 
-### Secure fix
-
-```rust
-// ✅ key replay-protection on claimant identity alone.
-DataKey::Claimed(Address)
-```
-
-Also add a dedup check in `add_claimant` so the same claimant can never be
-appended to the chain twice in the first place.
-
-### Impact
-
-Critical: a claimant who ends up appended twice to the rolling chain (by
-accident or design) can redeem the same underlying allocation once per valid
-proof, draining more than they were ever allocated.
-
----
-
-## 44. Revoked Vesting Claim — Revocation Doesn't Stop the Vesting Curve (`revoked_vesting_claim`)
-
-**Contract:** `vulnerable/revoked_vesting_claim` → `secure/secure_vesting`
-**Severity:** High
-
-### What it is
-
-A revocable vesting contract, deliberately built as a near line-for-line copy
-of `secure/secure_vesting` so the regression is easy to miss. `revoke()`
-correctly computes the unvested balance at revocation and credits it to
-treasury bookkeeping — but `vested_for_schedule()` never caps `now` at
-`revoked_at`, and `claim()` never checks `schedule.revoked_at.is_some()`. A
-"revoked" beneficiary's vesting curve keeps running exactly as if `revoke()`
-had never been called.
-
-### Vulnerable pattern
-
-```rust
-fn vested_for_schedule(env: &Env, schedule: &VestingSchedule) -> i128 {
-    let now = env.ledger().sequence();
-    // ❌ Missing: cap `now` at schedule.revoked_at when it is Some
-    if now >= schedule.end_ledger {
-        return schedule.total;
-    }
-    // ...
-}
-```
-
-### Secure fix
-
-```rust
-let effective_now = match schedule.revoked_at {
-    Some(revoked_at) if now > revoked_at => revoked_at,
-    _ => now,
-};
-```
-
-`claim()` must also `panic!("schedule revoked")` when `schedule.revoked_at.is_some()`.
-
-### Impact
-
-Insolvency: once the ledger passes `end_ledger`, a "terminated" beneficiary
-can still claim their full original grant on top of what the admin already
-reclaimed to treasury — the same tokens are promised twice.
-
----
-
-## 45. Multisig Escrow with Hardcoded Approval Threshold (`single_approval_escrow_release`)
-
-**Contract:** `vulnerable/single_approval_escrow_release`
-**Severity:** Critical
-
-### What it is
-
-A marketplace escrow requiring an N-of-M threshold of independent arbiters to
-approve before funds release to the seller. `initialize()` correctly
-validates and stores the threshold, and `approve_release()` correctly records
-each arbiter's approval exactly once. `release()`, however, compares the
-approval count against a hardcoded `1` instead of the stored `Threshold` —
-leftover logic from what looks like an earlier single-approver draft that was
-never updated when multisig support was added.
-
-### Vulnerable pattern
-
-```rust
-// ❌ should compare against the stored Threshold, not a hardcoded 1.
-if approvals.len() < 1 {
-    panic!("insufficient approvals");
-}
-```
-
-### Secure fix
-
-```rust
-let threshold: u32 = env.storage().persistent().get(&DataKey::Threshold).unwrap();
-if approvals.len() < threshold {
-    panic!("insufficient approvals");
+    env.storage()
+        .persistent()
+        .set(&DataKey::Collateral(user.clone()), &remaining_collateral);
 }
 ```
 
 ### Impact
 
-Critical: an escrow explicitly configured for 2-of-3 (or any N>1) consensus
-can be released by a single compromised, bribed, or malicious arbiter,
-completely defeating the anti-collusion protection the buyer believed they
-had.
-
----
-
-## 46. Vesting Claim Never Persists Its Running Total (`vesting_claimed_not_subtracted`)
-
-**Contract:** `vulnerable/vesting_claimed_not_subtracted` → `secure/secure_vesting`
-**Severity:** Critical
-
-### What it is
-
-A linear vesting contract where `claim()` correctly computes `claimable =
-vested - claimed` and pays it out, but never writes the updated `claimed`
-total back to storage. The persisted `claimed` field stays at `0` forever, no
-matter how many times `claim()` is called.
-
-### Vulnerable pattern
-
-```rust
-let claimable = vested - schedule.claimed;
-// ❌ Missing: schedule.claimed = vested; env.storage().persistent().set(&key, &schedule);
-// ...transfer claimable...
-claimable
-```
-
-### Secure fix
-
-```rust
-let claimable = vested - schedule.claimed;
-schedule.claimed = vested;
-env.storage().persistent().set(&key, &schedule);
-```
-
-### Impact
-
-Critical: every call to `claim()` — even called several times in a row at the
-exact same vesting point — re-pays the entire currently-vested amount again,
-not just the newly-vested increment. Repeated calls drain the contract far
-beyond the beneficiary's actual allocation, unboundedly.
-
----
-
-## 47. Missing Validation That Vesting Cliff Precedes End Ledger (`vesting_cliff_after_end`)
-
-**Contract:** `vulnerable/vesting_cliff_after_end` → `secure/secure_vesting`
-**Severity:** High
-
-### What it is
-
-A linear vesting contract's `create_schedule` validates `total > 0` but,
-unlike `secure/secure_vesting`, never validates `cliff_ledger < end_ledger`.
-A plausible real mistake (swapped function arguments, a transposed config
-field) lets an admin create a schedule where `cliff_ledger > end_ledger`.
-
-### Vulnerable pattern
-
-```rust
-if total <= 0 {
-    panic!("total must be positive");
-}
-// ❌ Missing: if cliff_ledger >= end_ledger { panic!("invalid schedule") }
-```
-
-### Secure fix
-
-```rust
-if cliff_ledger >= end_ledger {
-    panic!("invalid schedule");
-}
-```
-
-### Impact
-
-High, in two parts: (1) between the intended `end_ledger` and the erroneous
-(larger) `cliff_ledger`, `vested_for_schedule` returns 0 — funds are locked
-far longer than promised; (2) the instant `now` reaches the erroneous cliff,
-the beneficiary receives the entire allocation in one shot — a sudden,
-zero-gradual-vesting unlock, exactly the "instant dump" risk linear vesting
-exists to prevent.
+Protocol insolvency: any borrower can withdraw all deposited collateral without repaying their debt,
+extracting protocol funds and leaving 100% bad debt in the pool.
 
 ---
 

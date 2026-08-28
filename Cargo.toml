@@ -91,16 +91,7 @@ members = [
     "vulnerable/twap_window_too_short",
     "vulnerable/oracle_confidence_ignored",
     "vulnerable/reward_debt_not_updated",
-    "vulnerable/airdrop_campaign_collision",
-    "vulnerable/airdrop_claim_before_start",
-    "vulnerable/airdrop_expiry_ignored",
-    "vulnerable/auction_refund_block",
-    "vulnerable/epoch_claim_no_advance",
-    "vulnerable/merkle_duplicate_siblings",
-    "vulnerable/revoked_vesting_claim",
-    "vulnerable/single_approval_escrow_release",
-    "vulnerable/vesting_claimed_not_subtracted",
-    "vulnerable/vesting_cliff_after_end",
+    "vulnerable/collateral_withdraw_no_health_check",
 ]
 
 
