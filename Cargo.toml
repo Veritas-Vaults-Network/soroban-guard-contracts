@@ -91,6 +91,7 @@ members = [
     "vulnerable/twap_window_too_short",
     "vulnerable/oracle_confidence_ignored",
     "vulnerable/reward_debt_not_updated",
+    "vulnerable/collateral_withdraw_no_health_check",
 ]
 
 

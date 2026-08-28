@@ -1752,6 +1752,103 @@ the same `pending` amount each time until the reward pool is empty.
 
 ---
 
+## 38. Collateral Withdrawal Without Health Check (`collateral_withdraw_no_health_check`)
+
+**Contract:** `vulnerable/collateral_withdraw_no_health_check` → `vulnerable/collateral_withdraw_no_health_check/src/secure.rs`
+**Severity:** Critical
+
+### What it is
+
+A collateralized lending protocol requires borrowers to maintain a minimum collateral-to-debt
+ratio (governed by `max_ltv_bps`). While `borrow()` enforces that new debt is backed by the user's
+deposited collateral, `withdraw_collateral()` only checks that the user has enough deposited collateral
+balance (`current >= amount`) without verifying that their **remaining collateral** is sufficient to back
+their active outstanding debt.
+
+An attacker can deposit collateral, borrow up to the maximum allowable debt, and immediately withdraw
+100% of their deposited collateral. The attacker walks away with the borrowed funds while leaving
+unbacked bad debt in the protocol.
+
+### Vulnerable pattern
+
+```rust
+pub fn withdraw_collateral(env: Env, user: Address, amount: i128) {
+    user.require_auth();
+    assert!(amount > 0, "amount must be positive");
+
+    let current: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Collateral(user.clone()))
+        .unwrap_or(0);
+    assert!(current >= amount, "insufficient collateral balance");
+
+    // ❌ Missing health check on remaining collateral: user can withdraw collateral while holding debt
+    let new_collateral = current.checked_sub(amount).expect("underflow");
+    env.storage()
+        .persistent()
+        .set(&DataKey::Collateral(user.clone()), &new_collateral);
+}
+```
+
+### Secure fix
+
+```rust
+pub fn withdraw_collateral(env: Env, user: Address, amount: i128) {
+    user.require_auth();
+    assert!(amount > 0, "amount must be positive");
+
+    let current: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Collateral(user.clone()))
+        .unwrap_or(0);
+    assert!(current >= amount, "insufficient collateral balance");
+
+    let remaining_collateral = current.checked_sub(amount).expect("underflow");
+    let debt: i128 = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Debt(user.clone()))
+        .unwrap_or(0);
+
+    // ✅ FIX: Verify remaining collateral satisfies LTV requirements for existing debt
+    if debt > 0 {
+        let price: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CollateralPriceUsd)
+            .expect("not initialized");
+        let ltv_bps: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MaxLtvBps)
+            .expect("not initialized");
+
+        let remaining_value_usd =
+            remaining_collateral.checked_mul(price).expect("overflow") / 1_000_000;
+        let max_supported_debt =
+            remaining_value_usd.checked_mul(ltv_bps as i128).expect("overflow") / 10_000;
+
+        assert!(
+            debt <= max_supported_debt,
+            "health check failed: remaining collateral cannot cover debt"
+        );
+    }
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::Collateral(user.clone()), &remaining_collateral);
+}
+```
+
+### Impact
+
+Protocol insolvency: any borrower can withdraw all deposited collateral without repaying their debt,
+extracting protocol funds and leaving 100% bad debt in the pool.
+
+---
+
 ## General Soroban Security Checklist
 
 | Check | Description |
