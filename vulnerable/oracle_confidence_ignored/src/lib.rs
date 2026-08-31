@@ -104,7 +104,7 @@ mod tests {
     /// Narrow-confidence price below threshold — liquidation is expected and fine.
     #[test]
     fn test_vulnerable_narrow_confidence_liquidates() {
-        let (env, actor, client) = setup();
+        let (_env, actor, client) = setup();
         let oracle = OraclePrice {
             price: 900,
             confidence: 5, // 0.5 % of price — reliable
@@ -119,7 +119,7 @@ mod tests {
     /// anywhere from 700 to 1100; the liquidation should have been blocked.
     #[test]
     fn test_vulnerable_wide_confidence_still_liquidates() {
-        let (env, actor, client) = setup();
+        let (_env, actor, client) = setup();
         let oracle = OraclePrice {
             price: 900,
             confidence: 200, // ~22 % of price — highly unreliable
