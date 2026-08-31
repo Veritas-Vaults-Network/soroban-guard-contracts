@@ -37,8 +37,7 @@
 
 #![no_std]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, token, xdr::ToXdr, Address, Bytes,
-    BytesN, Env, Vec,
+    contract, contractimpl, contracttype, token, xdr::ToXdr, Address, Bytes, BytesN, Env, Vec,
 };
 
 #[contracttype]
@@ -174,7 +173,13 @@ impl CampaignAirdrop {
     /// eligible claimant's originally-valid proof will fail verification
     /// forever, even though `campaign_id`, `Token(campaign_id)` and
     /// `Claimed(campaign_id, claimant)` are all otherwise handled correctly.
-    pub fn claim(env: Env, campaign_id: u32, claimant: Address, amount: i128, proof: Vec<BytesN<32>>) {
+    pub fn claim(
+        env: Env,
+        campaign_id: u32,
+        claimant: Address,
+        amount: i128,
+        proof: Vec<BytesN<32>>,
+    ) {
         claimant.require_auth();
         assert!(!is_claimed(&env, campaign_id, &claimant), "already claimed");
 
@@ -195,10 +200,8 @@ impl CampaignAirdrop {
             &amount,
         );
 
-        env.events().publish(
-            ("claim",),
-            (campaign_id, claimant, amount),
-        );
+        env.events()
+            .publish(("claim",), (campaign_id, claimant, amount));
     }
 
     pub fn get_claimed(env: Env, campaign_id: u32, address: Address) -> bool {
@@ -231,7 +234,7 @@ mod tests {
         (root, proof)
     }
 
-    fn setup() -> (Env, Address) {
+    fn setup() -> (Env, Address, Address) {
         let env = Env::default();
         env.mock_all_auths();
 
@@ -241,7 +244,7 @@ mod tests {
         let client = CampaignAirdropClient::new(&env, &contract_id);
         client.initialize(&admin);
 
-        (env, contract_id)
+        (env, contract_id, admin)
     }
 
     fn new_token(env: &Env, token_admin: &Address, mint_to: &Address, amount: i128) -> Address {
@@ -258,10 +261,9 @@ mod tests {
     /// the bug only manifests once a second campaign is created.
     #[test]
     fn test_control_single_campaign_claim_succeeds() {
-        let (env, contract_id) = setup();
+        let (env, contract_id, admin) = setup();
         let client = CampaignAirdropClient::new(&env, &contract_id);
 
-        let admin = Address::generate(&env);
         let claimant_x = Address::generate(&env);
         let other = Address::generate(&env);
         let amount = 100i128;
@@ -291,10 +293,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "invalid merkle proof")]
     fn test_second_campaign_bricks_first_campaigns_pending_claims() {
-        let (env, contract_id) = setup();
+        let (env, contract_id, admin) = setup();
         let client = CampaignAirdropClient::new(&env, &contract_id);
 
-        let admin = Address::generate(&env);
         let claimant_x = Address::generate(&env);
         let other_x = Address::generate(&env);
         let amount_x = 100i128;
@@ -325,10 +326,9 @@ mod tests {
     /// lost to an attacker or transferred anywhere.
     #[test]
     fn test_first_campaigns_funds_remain_stuck_after_collision() {
-        let (env, contract_id) = setup();
+        let (env, contract_id, admin) = setup();
         let client = CampaignAirdropClient::new(&env, &contract_id);
 
-        let admin = Address::generate(&env);
         let claimant_x = Address::generate(&env);
         let other_x = Address::generate(&env);
         let amount_x = 100i128;

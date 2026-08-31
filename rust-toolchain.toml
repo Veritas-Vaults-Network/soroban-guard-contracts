@@ -1,0 +1,13 @@
+# Pinned so contributors and CI compile with the same toolchain.
+#
+# soroban-sdk 21.x pulls in ethnum 1.5.2, which fails to build on newer
+# rustc: it does `mem::transmute(())` into `TryFromIntError`, and that type
+# is no longer zero-sized, so the compiler rejects it (E0512). Tracking
+# `stable` therefore breaks the build the moment the runner picks up a new
+# release, through no change of ours.
+#
+# Raise this once the workspace moves to a soroban-sdk that builds on
+# current stable.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]

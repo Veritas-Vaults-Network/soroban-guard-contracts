@@ -96,11 +96,7 @@ impl VestingCliffAfterEnd {
             .persistent()
             .get(&DataKey::Token)
             .expect("contract not initialized");
-        token::Client::new(&env, &token).transfer(
-            &admin,
-            &env.current_contract_address(),
-            &amount,
-        );
+        token::Client::new(&env, &token).transfer(&admin, &env.current_contract_address(), &amount);
     }
 
     pub fn claim(env: Env, beneficiary: Address) -> i128 {

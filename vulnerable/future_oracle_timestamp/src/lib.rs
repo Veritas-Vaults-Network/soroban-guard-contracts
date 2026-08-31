@@ -93,7 +93,7 @@ mod tests {
         Env,
     };
 
-    fn setup(env: &Env) -> (oracle::MockOracleClient, VulnerablePricerClient) {
+    fn setup(env: &Env) -> (oracle::MockOracleClient<'_>, VulnerablePricerClient<'_>) {
         let oracle_id = env.register_contract(None, oracle::MockOracle);
         let oracle = oracle::MockOracleClient::new(env, &oracle_id);
         let admin = soroban_sdk::Address::generate(env);

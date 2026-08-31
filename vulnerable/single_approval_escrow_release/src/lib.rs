@@ -162,7 +162,7 @@ impl MultisigEscrow {
         // a hardcoded `1`. This is leftover logic from an earlier
         // single-approver draft that was never updated when N-of-M
         // multisig support was added.
-        if approvals.len() < 1 {
+        if approvals.is_empty() {
             panic!("insufficient approvals");
         }
 

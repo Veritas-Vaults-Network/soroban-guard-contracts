@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    name: workspace / fmt / build / test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Toolchain comes from rust-toolchain.toml so CI and contributors match.
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo registry and build artefacts
+        uses: Swatinem/rust-cache@v2
+
+      # Catches the most common mistake in this repo: adding a crate directory
+      # without adding it to `members`, so it is never compiled or tested.
+      - name: Check workspace integrity
+        run: ./scripts/check-workspace.sh
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Build
+        run: cargo build --workspace
+
+      - name: Test
+        # Limited parallelism: 101 Soroban crates will OOM a standard runner
+        # if cargo and the test harness both fan out unbounded.
+        run: cargo test --workspace -j 2 -- --test-threads 2
+
+  # Advisory for now. The workspace currently has ~54 pre-existing clippy
+  # findings, so `-D warnings` cannot gate merges yet without blocking every
+  # PR on unrelated cleanup. Fix those, then fold this into the job above and
+  # drop continue-on-error.
+  clippy:
+    name: clippy (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Toolchain comes from rust-toolchain.toml so CI and contributors match.
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Cache cargo registry and build artefacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --all-targets --keep-going -j 2
